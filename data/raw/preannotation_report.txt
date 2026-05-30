@@ -1,0 +1,9 @@
+ARGUS-N Pre-Annotation Report
+========================================
+Model             : first_finetuned_model.pt
+Total images      : 1946
+Frames with FOD   : 2
+Clean frames      : 1944
+Total detections  : 2
+Avg per FOD frame : 1.0
+========================================

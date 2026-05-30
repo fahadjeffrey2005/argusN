@@ -1,0 +1,39 @@
+# ============================================================
+# ARGUS-N Requirements
+# Install into drive venv only:
+#   source venv/bin/activate
+#   pip install -r requirements.txt
+# ============================================================
+
+# Core ML
+torch
+torchvision
+torchaudio
+
+# Numerical
+numpy
+scipy
+
+# Vision
+opencv-python
+Pillow
+
+# Detection
+ultralytics
+
+# Pathway A — PatchCore (DINOv2 loaded via torch.hub)
+# dinov2 loaded automatically; no extra pip package needed
+
+# Pathway B — CLIP
+git+https://github.com/openai/CLIP.git
+
+# Pathway C — RAFT (uses torchvision.models.optical_flow)
+# already included via torchvision above
+
+# Config / Utils
+pyyaml
+tqdm
+matplotlib
+
+# Logging
+colorlog
