@@ -344,6 +344,11 @@ def main():
         pa_boxes_full  = remap(pa_result["boxes"])
         flow_boxes_full = remap(flow_boxes)
         clip_results_full = remap_results(pb_result["results"])
+        yolo_dets_full    = [
+            {**d, "box": (d["box"][0], d["box"][1] + floor_y0,
+                            d["box"][2], d["box"][3] + floor_y0)}
+            for d in pd_result["detections"]
+        ]
 
         # -- Fusion (uses full-frame coords for NIR gate) -----------------
         alerts, meta = fusion.fuse(
