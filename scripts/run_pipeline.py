@@ -60,6 +60,7 @@ from src.flow.bump_detector import BumpDetector
 from src.anomaly.patchcore import PatchCoreDetector
 from src.semantic.clip_classifier import CLIPClassifier
 from src.fusion.fusion import AdaptiveFusion
+from ultralytics import YOLO as UltralyticsYOLO
 
 
 # -- Overlay helpers -------------------------------------------------------
@@ -153,6 +154,16 @@ def main():
 
     log.info("Initialising CLIP (Pathway B) ...")
     clip_clf = CLIPClassifier(device=device)
+
+    log.info("Initialising YOLO detector (Pathway D) ...")
+    _yolo_path = str(ROOT / cfg.get("yolo", "model_path",
+                     default="models/yolo_runs/fod_v2/weights/best.pt"))
+    try:
+        yolo_d = UltralyticsYOLO(_yolo_path)
+        log.info(f"YOLO Pathway D: {_yolo_path}")
+    except Exception as _e:
+        yolo_d = None
+        log.warning(f"YOLO Pathway D not loaded: {_e}")
 
     log.info("Initialising fusion gate ...")
     nir_enabled = cfg.get("fusion", "nir_gate_enabled", default=True) and not args.no_nir
@@ -306,6 +317,22 @@ def main():
             pb_result["results"] = clip_results_raw
             pb_result["ms"]      = (time.perf_counter() - t0) * 1000
 
+        # -- Pathway D: YOLO (every frame, ~3ms, supervised) ---------------
+        pd_result = {"detections": [], "ms": 0.0}
+        if yolo_d is not None:
+            _t0 = time.perf_counter()
+            _dev = "cuda" if "cuda" in device else device
+            _raw = yolo_d.predict(floor, conf=0.25, verbose=False, device=_dev)
+            if _raw and _raw[0].boxes is not None:
+                for _b in _raw[0].boxes:
+                    _x1,_y1,_x2,_y2 = map(int, _b.xyxy[0].tolist())
+                    pd_result["detections"].append({
+                        "box":      (_x1, _y1, _x2, _y2),
+                        "conf":     float(_b.conf[0]),
+                        "cls_name": yolo_d.names[int(_b.cls[0])],
+                    })
+            pd_result["ms"] = (time.perf_counter() - _t0) * 1000
+
         # -- Remap floor-crop boxes back to full-frame coords ------------
         def remap(boxes):
             return [(x1, y1 + floor_y0, x2, y2 + floor_y0) for x1,y1,x2,y2 in boxes]
@@ -327,10 +354,12 @@ def main():
             clip_results    = clip_results_full,
             flow_boxes      = flow_boxes_full,
             flow_discarded  = flow_discarded,
+            yolo_detections = yolo_dets_full,
         )
 
         meta["pa_ms"]   = pa_result.get("ms", 0)
         meta["pb_ms"]   = pb_result.get("ms", 0)
+        meta["pd_ms"]   = pd_result.get("ms", 0)
         meta["flow_ms"] = flow_ms
 
         # -- Logging & persistence ----------------------------------------

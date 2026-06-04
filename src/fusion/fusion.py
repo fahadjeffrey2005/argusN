@@ -153,6 +153,12 @@ class AdaptiveFusion:
     def _normalise_flow(self, flow_boxes) -> List[Dict]:
         return [{"box": b, "pathway": "flow", "confidence": 1.0} for b in flow_boxes]
 
+    def _normalise_yolo(self, yolo_detections) -> List[Dict]:
+        return [
+            {"box": d["box"], "pathway": "yolo", "confidence": d["conf"]}
+            for d in yolo_detections
+        ]
+
     def _group_by_overlap(self, regions: List[Dict]) -> List[List[Dict]]:
         clusters: List[List[Dict]] = []
         for reg in regions:
@@ -187,6 +193,7 @@ class AdaptiveFusion:
         clip_results:     List[Dict],
         flow_boxes:       List[tuple],
         flow_discarded:   bool = False,
+        yolo_detections:  List[Dict] = None,
     ) -> Tuple[List[Dict], Dict]:
         """
         Run one frame through the full fusion pipeline.
@@ -198,8 +205,9 @@ class AdaptiveFusion:
         pa = self._normalise_patchcore(patchcore_boxes, patchcore_score)
         pb = self._normalise_clip(clip_results)
         pc = [] if flow_discarded else self._normalise_flow(flow_boxes)
+        pd = self._normalise_yolo(yolo_detections or [])
 
-        all_regions = pa + pb + pc
+        all_regions = pa + pb + pc + pd
 
         if not all_regions:
             self._evict_stale_temporal()
