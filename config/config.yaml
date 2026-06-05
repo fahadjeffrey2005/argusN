@@ -68,7 +68,7 @@ exclusion_mask:
 # YOLO — Object Detection
 # ------------------------------------------------------------
 yolo:
-  model_path: models/yolo_runs/fod_v2/weights/best.pt
+  model_path: models/yolo_runs/fod_v2/weights/best.engine
   confidence_threshold: 0.35
   iou_threshold: 0.45
   input_size: 640
