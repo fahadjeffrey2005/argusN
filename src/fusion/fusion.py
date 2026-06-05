@@ -232,10 +232,14 @@ class AdaptiveFusion:
                 is_fast        = True
                 fast_count    += 1
             else:
-                confirmed, _ = self._update_temporal(merged_box, pathways[0])
-                if confirmed:
-                    should_confirm = True
-                    temp_count    += 1
+                # Flow alone is never enough — it fires on every moving texture.
+                # Single-pathway temporal confirmation requires a semantic pathway.
+                solo = pathways[0]
+                if solo != 'flow':
+                    confirmed, _ = self._update_temporal(merged_box, solo)
+                    if confirmed:
+                        should_confirm = True
+                        temp_count    += 1
 
             if not should_confirm:
                 continue
