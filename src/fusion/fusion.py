@@ -244,6 +244,12 @@ class AdaptiveFusion:
             if not should_confirm:
                 continue
 
+            # YOLO gate — the only pathway trained on real FOD images.
+            # On a moving vehicle, PatchCore and flow generate constant noise.
+            # Nothing alerts unless YOLO independently agrees.
+            if 'yolo' not in pathways:
+                continue
+
             nir_contrast = 0.0
             if self.nir_enabled and frame_nir is not None:
                 passes, nir_contrast = self._nir_gate.passes(frame_nir, merged_box)
