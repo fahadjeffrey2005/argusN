@@ -62,6 +62,64 @@ from src.semantic.clip_classifier import CLIPClassifier
 from src.fusion.fusion import AdaptiveFusion
 from ultralytics import YOLO as UltralyticsYOLO
 
+def _yolo_tiled(model, frame, conf=0.15, tile_rows=2, tile_cols=4, overlap=0.15, device="cuda"):
+    """
+    Run YOLO on a grid of overlapping tiles.
+    Maps detections back to full-frame coordinates and deduplicates with NMS.
+    Effective resolution per tile = full pixel density — catches small FOD.
+    """
+    import torchvision
+    h, w = frame.shape[:2]
+    all_boxes, all_scores, all_cls = [], [], []
+
+    for row in range(tile_rows):
+        for col in range(tile_cols):
+            x1 = int(col * w / tile_cols)
+            y1 = int(row * h / tile_rows)
+            # Add overlap so objects at tile edges aren't missed
+            x2 = min(w, int((col + 1) * w / tile_cols + w * overlap / tile_cols))
+            y2 = min(h, int((row + 1) * h / tile_rows + h * overlap / tile_rows))
+            tile = frame[y1:y2, x1:x2]
+            if tile.size == 0:
+                continue
+            results = model.predict(tile, conf=conf, verbose=False, device=device)
+            if results and results[0].boxes is not None:
+                for box in results[0].boxes:
+                    bx1, by1, bx2, by2 = map(int, box.xyxy[0].tolist())
+                    all_boxes.append([bx1 + x1, by1 + y1, bx2 + x1, by2 + y1])
+                    all_scores.append(float(box.conf[0]))
+                    all_cls.append(int(box.cls[0]))
+
+    if not all_boxes:
+        return []
+
+    import torch
+    boxes_t  = torch.tensor(all_boxes,  dtype=torch.float32)
+    scores_t = torch.tensor(all_scores, dtype=torch.float32)
+    keep = torchvision.ops.nms(boxes_t, scores_t, iou_threshold=0.5)
+
+    detections = []
+    fh, fw = frame.shape[:2]
+    max_box_area = 0.08 * fw * fh   # reject anything > 8% of frame — markings/shadows
+
+    for i in keep.tolist():
+        bx1, by1, bx2, by2 = all_boxes[i]
+        bw, bh_box = bx2 - bx1, by2 - by1
+        area = bw * bh_box
+        if area > max_box_area:
+            continue                  # too large — runway marking or shadow
+        aspect = max(bw, bh_box) / max(min(bw, bh_box), 1)
+        if aspect > 5.0:
+            continue                  # too elongated — line/marking
+        detections.append({
+            "box":      (bx1, by1, bx2, by2),
+            "conf":     all_scores[i],
+            "cls_name": model.names[all_cls[i]],
+        })
+    return detections
+
+
+
 
 # -- Overlay helpers -------------------------------------------------------
 def _draw_alerts(frame: np.ndarray, alerts: list, meta: dict) -> np.ndarray:
@@ -317,20 +375,16 @@ def main():
             pb_result["results"] = clip_results_raw
             pb_result["ms"]      = (time.perf_counter() - t0) * 1000
 
-        # -- Pathway D: YOLO (every frame, ~3ms, supervised) ---------------
+        # -- Pathway D: YOLO tiled (4x2 grid — catches small FOD) ----------
         pd_result = {"detections": [], "ms": 0.0}
         if yolo_d is not None:
             _t0 = time.perf_counter()
             _dev = "cuda" if "cuda" in device else device
-            _raw = yolo_d.predict(floor, conf=0.25, verbose=False, device=_dev)
-            if _raw and _raw[0].boxes is not None:
-                for _b in _raw[0].boxes:
-                    _x1,_y1,_x2,_y2 = map(int, _b.xyxy[0].tolist())
-                    pd_result["detections"].append({
-                        "box":      (_x1, _y1, _x2, _y2),
-                        "conf":     float(_b.conf[0]),
-                        "cls_name": yolo_d.names[int(_b.cls[0])],
-                    })
+            pd_result["detections"] = _yolo_tiled(
+                yolo_d, floor, conf=0.15,
+                tile_rows=2, tile_cols=4,
+                overlap=0.15, device=_dev
+            )
             pd_result["ms"] = (time.perf_counter() - _t0) * 1000
 
         # -- Remap floor-crop boxes back to full-frame coords ------------
