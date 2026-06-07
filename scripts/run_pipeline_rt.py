@@ -224,6 +224,8 @@ def main():
     parser.add_argument("--bank-frames",  type=int, default=60)
     parser.add_argument("--no-display",   action="store_true")
     parser.add_argument("--device",       default=None)
+    parser.add_argument("--top-crop",    type=float, default=0.22)
+    parser.add_argument("--bot-crop",    type=float, default=0.15)
     args = parser.parse_args()
 
     tile_rows, tile_cols = map(int, args.tiles.lower().split("x"))
