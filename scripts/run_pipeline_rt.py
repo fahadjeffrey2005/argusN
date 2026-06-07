@@ -51,15 +51,16 @@ from src.utils.config_loader import Config
 from src.utils.logger import get_logger
 from src.ingestion.multi_camera import MultiCameraIngestion
 from src.ingestion.nir_simulator import NIRSimulator
+_fisheye_maps = {}
 def undistort_fisheye(frame, strength=0.4):
     h, w = frame.shape[:2]
-    K = np.array([[w*0.8, 0, w/2],
-                  [0, w*0.8, h/2],
-                  [0, 0, 1]], dtype=np.float64)
-    D = np.array([strength, 0.0, 0.0, 0.0], dtype=np.float64)
-    map1, map2 = cv2.fisheye.initUndistortRectifyMap(
-        K, D, np.eye(3), K, (w,h), cv2.CV_16SC2)
-    return cv2.remap(frame, map1, map2, cv2.INTER_LINEAR)
+    key = (h, w)
+    if key not in _fisheye_maps:
+        K = np.array([[w*0.8, 0, w/2],[0, w*0.8, h/2],[0, 0, 1]], dtype=np.float64)
+        D = np.array([strength, 0.0, 0.0, 0.0], dtype=np.float64)
+        m1, m2 = cv2.fisheye.initUndistortRectifyMap(K, D, np.eye(3), K, (w,h), cv2.CV_16SC2)
+        _fisheye_maps[key] = (m1, m2)
+    return cv2.remap(frame, _fisheye_maps[key][0], _fisheye_maps[key][1], cv2.INTER_LINEAR)
 
 
 
@@ -94,8 +95,11 @@ def yolo_batch_tiles(
     if not tiles:
         return []
 
-    # Sequential tile inference (TensorRT batch=1 static engine)
-    results = [model.predict(t, conf=conf, verbose=False, device=device)[0] for t in tiles]
+    # Batch inference — works with dynamic batch engine, falls back to sequential
+    try:
+        results = model.predict(tiles, conf=conf, verbose=False, device=device)
+    except Exception:
+        results = [model.predict(t, conf=conf, verbose=False, device=device)[0] for t in tiles]
 
     all_boxes, all_scores, all_cls = [], [], []
     max_box_area = max_box_frac * w * h
