@@ -294,6 +294,11 @@ def main():
         if not frames_rgb:
             continue
         primary = undistort_fisheye(frames_rgb[0])
+        h = primary.shape[0]
+        t = int(h * args.top_crop)
+        b = int(h * (1 - args.bot_crop))
+        roi = primary[t:b, :]
+        roi_offset = t
 
         # Warmup
         if frame_idx < warmup_n:
@@ -313,7 +318,7 @@ def main():
 
         _dev = "cuda" if "cuda" in device else device
         detections = yolo_batch_tiles(
-            yolo_d, primary,
+            yolo_d, roi,
             conf=args.conf,
             tile_rows=tile_rows,
             tile_cols=tile_cols,
@@ -321,6 +326,7 @@ def main():
         )
 
         hot_ms = (time.perf_counter() - t0) * 1000
+        detections = [{**d, "box": (d["box"][0], d["box"][1]+roi_offset, d["box"][2], d["box"][3]+roi_offset)} for d in detections]
 
         # Submit to background workers (non-blocking)
         if pc_worker:
@@ -362,7 +368,7 @@ def main():
         # ── Display ───────────────────────────────────────────────────────
         if not args.no_display:
             vis = draw_overlay(primary, detections, fps, frame_idx)
-            cv2.imshow("ARGUS-N RT", vis)
+            cv2.imshow("ARGUS-N RT", cv2.resize(vis, (1280,400)))
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
