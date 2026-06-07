@@ -104,7 +104,7 @@ def yolo_batch_tiles(
     all_boxes, all_scores, all_cls = [], [], []
     max_box_area = max_box_frac * w * h
 
-    for result, (ox, oy) in zip(results if isinstance(results, list) else [results], origins):
+    for tile, result, (ox, oy) in zip(tiles, results if isinstance(results, list) else [results], origins):
         if result.boxes is None:
             continue
         for box in result.boxes:
@@ -117,6 +117,17 @@ def yolo_batch_tiles(
             aspect = max(bw, bh) / max(min(bw, bh), 1)
             if aspect > max_aspect:
                 continue
+            # Shadow filter: extract tile crop and check contrast
+            tx1=max(0,bx1-ox); ty1=max(0,by1-oy); tx2=min(tile.shape[1],bx2-ox); ty2=min(tile.shape[0],by2-oy)
+            tile_crop = tile[ty1:ty2, tx1:tx2]
+            if tile_crop.size > 0 and cv2.cvtColor(tile_crop, cv2.COLOR_BGR2GRAY).std() < 12:
+                continue  # shadow or flat surface — skip
+            # Shrink box 15% toward centre for tighter localisation
+            cbx = (bx1+bx2)//2; cby = (by1+by2)//2
+            bw2 = max(4, int((bx2-bx1)*0.85)//2)
+            bh2 = max(4, int((by2-by1)*0.85)//2)
+            bx1 = cbx-bw2; bx2 = cbx+bw2
+            by1 = cby-bh2; by2 = cby+bh2
             all_boxes.append([bx1, by1, bx2, by2])
             all_scores.append(float(box.conf[0]))
             all_cls.append(int(box.cls[0]))
