@@ -51,6 +51,17 @@ from src.utils.config_loader import Config
 from src.utils.logger import get_logger
 from src.ingestion.multi_camera import MultiCameraIngestion
 from src.ingestion.nir_simulator import NIRSimulator
+def undistort_fisheye(frame, strength=0.4):
+    h, w = frame.shape[:2]
+    K = np.array([[w*0.8, 0, w/2],
+                  [0, w*0.8, h/2],
+                  [0, 0, 1]], dtype=np.float64)
+    D = np.array([strength, 0.0, 0.0, 0.0], dtype=np.float64)
+    map1, map2 = cv2.fisheye.initUndistortRectifyMap(
+        K, D, np.eye(3), K, (w,h), cv2.CV_16SC2)
+    return cv2.remap(frame, map1, map2, cv2.INTER_LINEAR)
+
+
 
 
 # ── Batched tiled YOLO ─────────────────────────────────────────────────────
@@ -58,8 +69,8 @@ def yolo_batch_tiles(
     model, frame, conf=0.15,
     tile_rows=2, tile_cols=4,
     overlap=0.15, device="cuda",
-    max_box_frac=0.06,
-    max_aspect=5.0,
+    max_box_frac=0.03,
+    max_aspect=3.5,
 ):
     """
     Extract tiles, run ONE batched GPU inference call, map back to frame coords.
@@ -282,7 +293,7 @@ def main():
     for frames_rgb, frame_nir in camera:
         if not frames_rgb:
             continue
-        primary = frames_rgb[0]
+        primary = undistort_fisheye(frames_rgb[0])
 
         # Warmup
         if frame_idx < warmup_n:
