@@ -328,7 +328,7 @@ def main():
         )
 
         hot_ms = (time.perf_counter() - t0) * 1000
-        detections = [{**d,"box":(d["box"][0],d["box"][1]+roi_off,d["box"][2],d["box"][3]+roi_off)} for d in detections]
+        detections = [{**d,"box":(d["box"][0],d["box"][1]+roi_offset,d["box"][2],d["box"][3]+roi_offset)} for d in detections]
         detections = [{**d, "box": (d["box"][0], d["box"][1]+roi_offset, d["box"][2], d["box"][3]+roi_offset)} for d in detections]
 
         # Submit to background workers (non-blocking)
