@@ -83,13 +83,13 @@ def yolo_batch_tiles(
     if not tiles:
         return []
 
-    # Single batched inference call
-    results = model.predict(tiles, conf=conf, verbose=False, device=device)
+    # Sequential tile inference (TensorRT batch=1 static engine)
+    results = [model.predict(t, conf=conf, verbose=False, device=device)[0] for t in tiles]
 
     all_boxes, all_scores, all_cls = [], [], []
     max_box_area = max_box_frac * w * h
 
-    for result, (ox, oy) in zip(results, origins):
+    for result, (ox, oy) in zip(results if isinstance(results, list) else [results], origins):
         if result.boxes is None:
             continue
         for box in result.boxes:
