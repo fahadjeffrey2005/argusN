@@ -84,24 +84,41 @@ h1{color:#0f0;margin:8px 0 4px}p{color:#888;margin:0 0 8px;font-size:12px}
         self._jpeg    = None
         self._lock    = threading.Lock()
         self._server  = None
+        self._encode_q = queue.Queue(maxsize=1)  # always latest frame, never blocks hot path
 
     def push(self, frame: np.ndarray):
-        """Encode frame to JPEG and store. Called from hot path — must not block."""
+        """
+        Hand frame off to encode thread. Hot-path safe — returns in microseconds.
+        Drops frame if encoder is still busy (always shows latest, never queues up).
+        """
         try:
-            if self._scale != 1.0:
-                h, w = frame.shape[:2]
-                frame = cv2.resize(
-                    frame,
-                    (int(w * self._scale), int(h * self._scale)),
-                    interpolation=cv2.INTER_LINEAR,
-                )
-            _, buf = cv2.imencode(
-                '.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, self._quality]
-            )
-            with self._lock:
-                self._jpeg = buf.tobytes()
-        except Exception:
+            self._encode_q.get_nowait()   # evict stale frame if present
+        except queue.Empty:
             pass
+        try:
+            self._encode_q.put_nowait(frame)
+        except queue.Full:
+            pass
+
+    def _encode_loop(self):
+        """Background thread: resize + JPEG encode, never touches the hot path."""
+        while True:
+            frame = self._encode_q.get()
+            try:
+                if self._scale != 1.0:
+                    h, w = frame.shape[:2]
+                    frame = cv2.resize(
+                        frame,
+                        (int(w * self._scale), int(h * self._scale)),
+                        interpolation=cv2.INTER_LINEAR,
+                    )
+                _, buf = cv2.imencode(
+                    '.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, self._quality]
+                )
+                with self._lock:
+                    self._jpeg = buf.tobytes()
+            except Exception:
+                pass
 
     def _get_jpeg(self):
         with self._lock:
@@ -145,6 +162,9 @@ h1{color:#0f0;margin:8px 0 4px}p{color:#888;margin:0 0 8px;font-size:12px}
                 else:
                     self.send_error(404)
 
+        # Start background encode thread
+        threading.Thread(target=self._encode_loop, daemon=True).start()
+
         class _Server(HTTPServer):
             allow_reuse_address = True  # must be set before bind, not after
 
@@ -156,6 +176,7 @@ h1{color:#0f0;margin:8px 0 4px}p{color:#888;margin:0 0 8px;font-size:12px}
         if self._ngrok:
             try:
                 from pyngrok import ngrok as _ngrok
+                _ngrok.kill()                          # kill any stale tunnel first
                 tunnel = _ngrok.connect(self._port, 'http')
                 print(f"[STREAM] ngrok feed  → {tunnel.public_url}", flush=True)
             except Exception as e:
@@ -503,6 +524,11 @@ def main():
                   f"YOLO={len(detections)}  hot={hot_ms:.1f}ms  "
                   f"PC={pc_score}", flush=True)
 
+        # ── Draw once, reuse for both alert save and stream ───────────────
+        vis = None
+        if detections or streamer is not None:
+            vis = draw_overlay(primary, detections, fps, frame_idx)
+
         # ── Alert ─────────────────────────────────────────────────────────
         if detections:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -515,12 +541,10 @@ def main():
                     "cls": det["cls_name"], "fps": round(fps,1),
                 })
             frame_path = out_anom / f"fod_{ts}.jpg"
-            cv2.imwrite(str(frame_path), draw_overlay(primary, detections, fps, frame_idx))
+            cv2.imwrite(str(frame_path), vis)
 
-        # ── Stream ────────────────────────────────────────────────────────
-        # push() is non-blocking — JPEG encode + hand-off, never stalls hot path
+        # ── Stream — push() returns in microseconds, encode is background ─
         if streamer is not None:
-            vis = draw_overlay(primary, detections, fps, frame_idx)
             streamer.push(vis)
 
         frame_idx += 1
