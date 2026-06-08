@@ -76,10 +76,11 @@ h1{color:#0f0;margin:8px 0 4px}p{color:#888;margin:0 0 8px;font-size:12px}
 <p>Live detection stream &mdash; refresh if stream stalls</p>
 <img src="/stream"></body></html>"""
 
-    def __init__(self, port: int = 8080, quality: int = 75, scale: float = 0.5):
+    def __init__(self, port: int = 8089, quality: int = 75, scale: float = 0.5, ngrok: bool = False):
         self._port    = port
         self._quality = quality
         self._scale   = scale
+        self._ngrok   = ngrok
         self._jpeg    = None
         self._lock    = threading.Lock()
         self._server  = None
@@ -144,13 +145,21 @@ h1{color:#0f0;margin:8px 0 4px}p{color:#888;margin:0 0 8px;font-size:12px}
                 else:
                     self.send_error(404)
 
-        self._server = HTTPServer(('0.0.0.0', self._port), Handler)
-        self._server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        class _Server(HTTPServer):
+            allow_reuse_address = True  # must be set before bind, not after
+
+        self._server = _Server(('0.0.0.0', self._port), Handler)
         t = threading.Thread(target=self._server.serve_forever, daemon=True)
         t.start()
-        print(f"[STREAM] Live feed → http://0.0.0.0:{self._port}  "
-              f"(open in browser on this machine or any machine on the network)",
-              flush=True)
+        print(f"[STREAM] Local feed  → http://0.0.0.0:{self._port}", flush=True)
+
+        if self._ngrok:
+            try:
+                from pyngrok import ngrok as _ngrok
+                tunnel = _ngrok.connect(self._port, 'http')
+                print(f"[STREAM] ngrok feed  → {tunnel.public_url}", flush=True)
+            except Exception as e:
+                print(f"[STREAM] ngrok failed: {e}  (pip install pyngrok)", flush=True)
 
     def stop(self):
         if self._server:
@@ -345,8 +354,10 @@ def main():
     parser.add_argument("--bank-frames",  type=int, default=60)
     parser.add_argument("--no-display",   action="store_true",
                         help="Disable MJPEG stream entirely")
-    parser.add_argument("--stream-port",  type=int, default=8080,
-                        help="Port for MJPEG HTTP stream (default 8080)")
+    parser.add_argument("--ngrok",        action="store_true",
+                        help="Expose stream via ngrok tunnel (requires: pip install pyngrok)")
+    parser.add_argument("--stream-port",  type=int, default=8089,
+                        help="Port for MJPEG HTTP stream (default 8089)")
     parser.add_argument("--stream-scale", type=float, default=0.5,
                         help="Downscale before encoding for stream (default 0.5)")
     parser.add_argument("--device",       default=None)
@@ -411,6 +422,7 @@ def main():
             port=args.stream_port,
             quality=75,
             scale=args.stream_scale,
+            ngrok=args.ngrok,
         )
         streamer.start()
 
