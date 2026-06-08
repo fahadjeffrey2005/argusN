@@ -13,12 +13,14 @@ BACKGROUND (async threads, never block hot path):
   - PatchCore runs every 30 frames
   - CLIP runs when YOLO fires, on detected crops
   - Results posted to queue → enrich next alert
+  - MJPEG HTTP stream — open browser to view live output (no GUI needed)
 
 Target: 25-30 fps on Jetson Orin / Thor
 Usage:
     python scripts/run_pipeline_rt.py --source "raw data/recording.mp4"
     python scripts/run_pipeline_rt.py --source "raw data/recording.mp4" --tiles 2x4
     python scripts/run_pipeline_rt.py --source "raw data/recording.mp4" --yolo-only
+    python scripts/run_pipeline_rt.py --source "raw data/recording.mp4" --yolo-only --stream-port 8080
 """
 
 import argparse
@@ -27,9 +29,11 @@ import sys
 import time
 import threading
 import queue
+import socket
 from pathlib import Path
 from datetime import datetime
 from collections import deque
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import cv2
 import numpy as np
@@ -51,6 +55,108 @@ from src.utils.config_loader import Config
 from src.utils.logger import get_logger
 from src.ingestion.multi_camera import MultiCameraIngestion
 from src.ingestion.nir_simulator import NIRSimulator
+
+
+# ── MJPEG HTTP Streamer ────────────────────────────────────────────────────
+class MJPEGStreamer:
+    """
+    Headless real-time display via MJPEG over HTTP.
+    Open http://<machine-ip>:<port> in any browser to see the live feed.
+    push() is non-blocking — drops frame if consumer is slow, never stalls hot path.
+    """
+
+    _HTML = b"""<!DOCTYPE html>
+<html><head><title>ARGUS-N Live</title>
+<style>body{margin:0;background:#111;display:flex;flex-direction:column;
+align-items:center;justify-content:center;min-height:100vh;font-family:monospace}
+img{max-width:100%;height:auto;border:2px solid #0f0}
+h1{color:#0f0;margin:8px 0 4px}p{color:#888;margin:0 0 8px;font-size:12px}
+</style></head>
+<body><h1>ARGUS-N RT</h1>
+<p>Live detection stream &mdash; refresh if stream stalls</p>
+<img src="/stream"></body></html>"""
+
+    def __init__(self, port: int = 8080, quality: int = 75, scale: float = 0.5):
+        self._port    = port
+        self._quality = quality
+        self._scale   = scale
+        self._jpeg    = None
+        self._lock    = threading.Lock()
+        self._server  = None
+
+    def push(self, frame: np.ndarray):
+        """Encode frame to JPEG and store. Called from hot path — must not block."""
+        try:
+            if self._scale != 1.0:
+                h, w = frame.shape[:2]
+                frame = cv2.resize(
+                    frame,
+                    (int(w * self._scale), int(h * self._scale)),
+                    interpolation=cv2.INTER_LINEAR,
+                )
+            _, buf = cv2.imencode(
+                '.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, self._quality]
+            )
+            with self._lock:
+                self._jpeg = buf.tobytes()
+        except Exception:
+            pass
+
+    def _get_jpeg(self):
+        with self._lock:
+            return self._jpeg
+
+    def start(self):
+        streamer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass  # suppress per-request logs
+
+            def do_GET(self):
+                if self.path == '/':
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html')
+                    self.end_headers()
+                    self.wfile.write(streamer._HTML)
+
+                elif self.path == '/stream':
+                    self.send_response(200)
+                    self.send_header(
+                        'Content-Type',
+                        'multipart/x-mixed-replace; boundary=frame'
+                    )
+                    self.send_header('Cache-Control', 'no-cache')
+                    self.end_headers()
+                    try:
+                        while True:
+                            jpeg = streamer._get_jpeg()
+                            if jpeg:
+                                self.wfile.write(
+                                    b'--frame\r\n'
+                                    b'Content-Type: image/jpeg\r\n\r\n'
+                                    + jpeg + b'\r\n'
+                                )
+                            time.sleep(0.033)  # ~30fps max to browser
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+
+                else:
+                    self.send_error(404)
+
+        self._server = HTTPServer(('0.0.0.0', self._port), Handler)
+        self._server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        t = threading.Thread(target=self._server.serve_forever, daemon=True)
+        t.start()
+        print(f"[STREAM] Live feed → http://0.0.0.0:{self._port}  "
+              f"(open in browser on this machine or any machine on the network)",
+              flush=True)
+
+    def stop(self):
+        if self._server:
+            self._server.shutdown()
+
+
 _fisheye_maps = {}
 def undistort_fisheye(frame, strength=0.4):
     h, w = frame.shape[:2]
@@ -237,10 +343,15 @@ def main():
                         help="Skip PatchCore and CLIP (maximum speed)")
     parser.add_argument("--build-bank",   action="store_true")
     parser.add_argument("--bank-frames",  type=int, default=60)
-    parser.add_argument("--no-display",   action="store_true")
+    parser.add_argument("--no-display",   action="store_true",
+                        help="Disable MJPEG stream entirely")
+    parser.add_argument("--stream-port",  type=int, default=8080,
+                        help="Port for MJPEG HTTP stream (default 8080)")
+    parser.add_argument("--stream-scale", type=float, default=0.5,
+                        help="Downscale before encoding for stream (default 0.5)")
     parser.add_argument("--device",       default=None)
-    parser.add_argument("--top-crop",    type=float, default=0.22)
-    parser.add_argument("--bot-crop",    type=float, default=0.15)
+    parser.add_argument("--top-crop",     type=float, default=0.22)
+    parser.add_argument("--bot-crop",     type=float, default=0.15)
     args = parser.parse_args()
 
     tile_rows, tile_cols = map(int, args.tiles.lower().split("x"))
@@ -293,15 +404,21 @@ def main():
         except Exception as e:
             log.warning(f"CLIP skipped: {e}")
 
+    # MJPEG stream (replaces cv2.imshow — works headless)
+    streamer = None
+    if not args.no_display:
+        streamer = MJPEGStreamer(
+            port=args.stream_port,
+            quality=75,
+            scale=args.stream_scale,
+        )
+        streamer.start()
+
     # Warmup + bank build
     warmup_n   = cfg.get("pipeline","warmup_frames",default=60)
     warm_buf   = []
     frame_idx  = 0
     alert_log  = []
-
-    if not args.no_display:
-        cv2.namedWindow("ARGUS-N RT", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("ARGUS-N RT", 1280, 720)
 
     # FPS tracker
     fps_buf = deque(maxlen=30)
@@ -343,8 +460,13 @@ def main():
         )
 
         hot_ms = (time.perf_counter() - t0) * 1000
-        detections = [{**d,"box":(d["box"][0],d["box"][1]+roi_offset,d["box"][2],d["box"][3]+roi_offset)} for d in detections]
-        detections = [{**d, "box": (d["box"][0], d["box"][1]+roi_offset, d["box"][2], d["box"][3]+roi_offset)} for d in detections]
+
+        # Map ROI-relative boxes back to full frame coords (applied once)
+        detections = [
+            {**d, "box": (d["box"][0], d["box"][1] + roi_offset,
+                           d["box"][2], d["box"][3] + roi_offset)}
+            for d in detections
+        ]
 
         # Submit to background workers (non-blocking)
         if pc_worker:
@@ -383,19 +505,18 @@ def main():
             frame_path = out_anom / f"fod_{ts}.jpg"
             cv2.imwrite(str(frame_path), draw_overlay(primary, detections, fps, frame_idx))
 
-        # ── Display ───────────────────────────────────────────────────────
-        if not args.no_display:
+        # ── Stream ────────────────────────────────────────────────────────
+        # push() is non-blocking — JPEG encode + hand-off, never stalls hot path
+        if streamer is not None:
             vis = draw_overlay(primary, detections, fps, frame_idx)
-            cv2.imshow("ARGUS-N RT", cv2.resize(vis, (1280,400)))
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            streamer.push(vis)
 
         frame_idx += 1
 
     # ── Teardown ──────────────────────────────────────────────────────────
     camera.release()
-    if not args.no_display:
-        cv2.destroyAllWindows()
+    if streamer:
+        streamer.stop()
 
     log_path = out_det / f"alerts_rt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     log_path.write_text(json.dumps(alert_log, indent=2))
