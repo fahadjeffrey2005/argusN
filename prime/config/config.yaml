@@ -1,0 +1,60 @@
+device: cuda
+
+camera:
+  input_mode: video_file
+  video_file_path: data/raw/videos/recording.mp4
+  resolution:
+    width: 1920
+    height: 1080
+  fps: 60
+
+yolo:
+  model_path: models/yolo/finetuned/best.pt
+  confidence_threshold: 0.35
+  iou_threshold: 0.45
+  input_size: 640
+
+flow:
+  residual_threshold: 2.5
+  min_anomaly_area_px: 10
+  max_anomaly_area_px: 50000
+
+imu:
+  enabled: false
+  simulated_speed_kmh: 30.0
+
+egomotion:
+  camera_height_m: 0.325
+  focal_length_px: 1200.0
+
+cnn:
+  model_path: models/cnn/prime_classifier.pth
+  pretrained_path: models/cnn/mobilenetv3_small.pth
+  input_size: 128
+  channels: 4
+  num_classes: 5
+  class_names: [fod, shadow, runway_marking, strobe_light, clean_tarmac]
+  fod_class_id: 0
+  confidence_threshold: 0.6
+  both_tag_bonus: 0.1
+  epochs: 30
+  batch_size: 32
+  learning_rate: 0.0005
+  early_stopping_patience: 5
+
+fusion:
+  iou_match_threshold: 0.3
+  patch_padding_px: 20
+
+pipeline:
+  top_crop: 0.22
+  bot_crop: 0.15
+  warmup_frames: 30
+
+outputs:
+  detections_path: outputs/detections
+  alerts_path: outputs/alerts
+
+logging:
+  log_path: logs/prime.log
+  level: INFO

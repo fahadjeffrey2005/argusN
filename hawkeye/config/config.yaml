@@ -1,0 +1,50 @@
+device: cuda
+
+camera:
+  input_mode: video_file
+  video_file_path: data/raw/videos/recording.mp4
+  fps: 60
+
+yolo:
+  model_path: models/yolo/finetuned/best.pt
+  confidence_threshold: 0.35
+  iou_threshold: 0.45
+  input_size: 640
+
+flow:
+  residual_threshold: 2.5
+  min_anomaly_area_px: 10
+  max_anomaly_area_px: 50000
+
+imu:
+  enabled: false
+  simulated_speed_kmh: 30.0
+
+egomotion:
+  camera_height_m: 0.325
+  focal_length_px: 1200.0
+
+patchcore:
+  bank_path: models/patchcore/bank.pt
+  anomaly_threshold: 0.6
+  backbone: wide_resnet50_2
+  layers: [layer2, layer3]
+
+fusion:
+  votes_required: 2
+  yolo_weight: 1
+  flow_weight: 1
+  patchcore_weight: 1
+
+pipeline:
+  top_crop: 0.22
+  bot_crop: 0.15
+  warmup_frames: 30
+
+outputs:
+  detections_path: outputs/detections
+  alerts_path: outputs/alerts
+
+logging:
+  log_path: logs/hawkeye.log
+  level: INFO
