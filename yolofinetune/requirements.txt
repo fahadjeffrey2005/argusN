@@ -1,0 +1,23 @@
+# YOLOFINETUNE requirements
+# Install inside yolofinetune/venv:
+#   cd /Volumes/T72/argusN/yolofinetune
+#   bash setup.sh
+
+# Core
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.24.0
+opencv-python>=4.8.0
+pyyaml>=6.0
+
+# YOLO
+ultralytics>=8.0.0
+
+# Augmentation
+albumentations>=1.3.0
+
+# Evaluation
+scikit-learn>=1.3.0
+
+# Utilities
+tqdm>=4.65.0

@@ -1,0 +1,11 @@
+venv/
+data/raw/
+data/augmented/
+data/annotated/
+models/yolo/finetuned/
+models/yolo/runs/
+outputs/
+logs/
+__pycache__/
+*.pyc
+.DS_Store

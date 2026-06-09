@@ -1,0 +1,15 @@
+# YOLOFINETUNE — Dataset Configuration
+# Used by ultralytics YOLO for training and evaluation.
+# Paths are relative to the yolofinetune/ project root.
+
+# After augmentation, point train/val at augmented splits.
+# Keep test pointing at unaугmented annotated/images/test — never augment test.
+
+path: .   # project root (run scripts from yolofinetune/)
+
+train: data/augmented/images/train   # after running augment_dataset.py
+val:   data/annotated/images/val     # no augmentation on val
+test:  data/annotated/images/test    # held-out test set — never touch
+
+nc: 1                # number of classes
+names: ["fod"]       # class 0
