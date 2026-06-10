@@ -178,6 +178,10 @@ def main():
     fps_timer   = time.time()
     fps_display = 0.0
 
+    if args.preview:
+        cv2.namedWindow("HAWKEYE — Demo", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("HAWKEYE — Demo", min(orig_w, 1280), min(orig_h, 720))
+
     log.info("Rendering...")
 
     try:
@@ -246,7 +250,11 @@ def main():
             writer.write(out_frame)
 
             if args.preview:
-                cv2.imshow("HAWKEYE — Demo", out_frame)
+                # Scale down for display (keep aspect ratio, max 1280px wide)
+                display_w = min(orig_w, 1280)
+                display_h = int(orig_h * display_w / orig_w)
+                display_frame = cv2.resize(out_frame, (display_w, display_h))
+                cv2.imshow("HAWKEYE — Demo", display_frame)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     log.info("User quit preview")
                     break
