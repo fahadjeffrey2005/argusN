@@ -78,9 +78,8 @@ def train(cfg_path: str = "config/config.yaml", overrides: dict = None):
     log.info(f"Dataset yaml       : {data_yaml}")
 
     if not Path(pretrained_path).exists():
-        log.error(f"Pretrained weights not found: {pretrained_path}")
-        log.error("Run setup.sh first or download yolov8n.pt manually.")
-        sys.exit(1)
+        log.warning(f"Pretrained weights not found at {pretrained_path} — letting ultralytics auto-download")
+        pretrained_path = "yolov8n.pt"
 
     if not verify_dataset(data_yaml):
         log.error(f"Dataset not ready: {data_yaml}")
