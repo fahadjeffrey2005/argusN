@@ -7,13 +7,13 @@ camera:
 
 yolo:
   model_path: models/yolo/finetuned/best.pt
-  confidence_threshold: 0.35
+  confidence_threshold: 0.50   # raised from 0.35 — reduces YOLO over-detection
   iou_threshold: 0.45
   input_size: 640
 
 flow:
-  residual_threshold: 2.5
-  min_anomaly_area_px: 10
+  residual_threshold: 4.0      # raised from 2.5 — ignores micro-vibration/compression noise
+  min_anomaly_area_px: 500     # raised from 10 — only physically meaningful objects
   max_anomaly_area_px: 50000
 
 imu:
@@ -27,7 +27,7 @@ egomotion:
 
 patchcore:
   bank_path: models/patchcore/bank.pt
-  anomaly_threshold: 0.68
+  anomaly_threshold: 0.70
   backbone: wide_resnet50_2
   layers: [layer2, layer3]
 
