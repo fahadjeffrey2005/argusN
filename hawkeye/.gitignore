@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+venv/
+
+# Data — raw videos and images not tracked
+data/raw/
+data/annotated/
+data/augmented/
+data/clean_frames/
+data/patchcore_bank/
+
+# Model weights — excluded by default (large files)
+models/
+# Exceptions — track trained weights and bank after evaluation
+!models/yolo/
+!models/yolo/finetuned/
+!models/yolo/finetuned/best.pt
+!models/patchcore/
+!models/patchcore/bank.pt
+
+# Outputs — large files, exclude by default
+outputs/
+# Exception — track demo video
+!outputs/demo_hawkeye_fod1.mp4
+
+# Logs — exclude verbose logs, track eval results
+logs/
+!logs/eval_results.json
+!logs/hawkeye_results.md
+!logs/retrain_history.json
+
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo

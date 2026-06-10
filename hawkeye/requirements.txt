@@ -1,6 +1,6 @@
 # HAWKEYE requirements
 # Install inside hawkeye/venv:
-#   cd /Volumes/T72/argusN/hawkeye
+#   cd /Volumes/T72/argusN/hawkeye  (Mac) or  cd ~/argusN/hawkeye  (Ubuntu)
 #   bash setup.sh
 
 # Core
@@ -13,10 +13,12 @@ pyyaml>=6.0
 # YOLO
 ultralytics>=8.0.0
 
-# PatchCore backbone (WideResNet50 via torchvision — already included above)
-# No additional install needed
+# Dataset download
+roboflow>=1.1.0
 
-# Evaluation
+# PatchCore backbone (WideResNet50 via torchvision — already included above)
+
+# Evaluation / report
 scikit-learn>=1.3.0
 
 # Utilities
