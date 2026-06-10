@@ -48,10 +48,26 @@ def apply_roi_crop(frame, top_frac: float, bot_frac: float):
     return frame[y_start:y_end, :], y_start
 
 
+def confidence_color(patchcore_score: float) -> tuple:
+    """
+    Map PatchCore score [0.6, 1.0] to BGR colour:
+      0.6  → green  (0, 255, 0)
+      0.75 → yellow (0, 255, 255)
+      1.0  → red    (0, 0, 255)
+    Uses HSV hue interpolation: green(60°) → yellow(30°) → red(0°)
+    """
+    t = max(0.0, min(1.0, (patchcore_score - 0.6) / 0.4))  # normalise to [0,1]
+    hue = int(60 * (1.0 - t))                                # 60° (green) → 0° (red)
+    hsv = np.array([[[hue, 255, 255]]], dtype=np.uint8)
+    bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[0][0]
+    return (int(bgr[0]), int(bgr[1]), int(bgr[2]))
+
+
 def draw_alerts(frame, alerts: list, y_offset: int, alert_count: int):
     """
     Draw confirmed HAWKEYE alerts onto the full (un-cropped) frame.
-    Matches YOLOFINETUNE overlay style: red boxes, alert banner.
+    Box colour: green (low confidence) → yellow → red (high confidence).
+    Label: 'FOD 0.85' — clean and minimal.
     """
     for alert in alerts:
         x1 = alert["x"]
@@ -59,20 +75,14 @@ def draw_alerts(frame, alerts: list, y_offset: int, alert_count: int):
         x2 = x1 + alert["w"]
         y2 = y1 + alert["h"]
 
-        # Red bounding box (same as yolofinetune)
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        score  = alert.get("patchcore_score", 0.6)
+        colour = confidence_color(score)
 
-        # Vote breakdown label
-        label = (
-            f"FOD [{alert['votes']}/3] "
-            f"Y={alert['yolo_vote']} "
-            f"F={alert['flow_vote']} "
-            f"P={alert['patchcore_vote']}"
-        )
+        cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 2)
         cv2.putText(
-            frame, label,
-            (x1, y1 - 8),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2
+            frame, f"FOD {score:.2f}",
+            (x1, y1 - 6),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 2
         )
 
     if alerts:

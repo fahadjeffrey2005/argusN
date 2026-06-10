@@ -27,7 +27,7 @@ egomotion:
 
 patchcore:
   bank_path: models/patchcore/bank.pt
-  anomaly_threshold: 0.6
+  anomaly_threshold: 0.68
   backbone: wide_resnet50_2
   layers: [layer2, layer3]
 
