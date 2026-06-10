@@ -167,12 +167,28 @@ def debug_fusion_on_frame(cfg, log, video_path: str = None):
         log.warning("No video — skipping fusion debug")
         return
 
-    farneback.compute(frames[0])
     egomotion.update_imu(speed_kmh=cfg.get("imu", "simulated_speed_kmh", default=30.0))
 
-    for i, frame in enumerate(frames[1:11], 1):
-        ch, cw = frame.shape[:2]
+    log.info("Scanning video for first YOLO detection (skipping empty frames)...")
+    cap = cv2.VideoCapture(video_path)
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    prev_frame = None
+    found = 0
+    frame_idx = 0
 
+    while found < 10:
+        ret, raw = cap.read()
+        if not ret:
+            break
+        frame_idx += 1
+
+        h, w = raw.shape[:2]
+        y_start = int(h * top_crop)
+        y_end   = int(h * (1.0 - bot_crop))
+        frame   = raw[y_start:y_end, :]
+        ch, cw  = frame.shape[:2]
+
+        # YOLO
         results = yolo.predict(frame, imgsz=imgsz, conf=conf, iou=iou, verbose=False)
         yolo_dets = []
         for r in results:
@@ -183,32 +199,51 @@ def debug_fusion_on_frame(cfg, log, video_path: str = None):
                 yolo_dets.append({"x1":int(x1),"y1":int(y1),"x2":int(x2),"y2":int(y2),
                                    "confidence":float(box.conf[0]),"class_id":0,"class_name":"fod"})
 
+        # Flow (need two frames)
         flow = farneback.compute(frame)
         cands = []
         if flow is not None:
             exp = egomotion.compute_expected_flow(ch, cw)
             _, _, cands = residual.compute(flow, exp)
 
-        # Score first YOLO detection with PatchCore manually
+        # Only report frames where YOLO fires
+        if not yolo_dets:
+            continue
+
+        found += 1
+
+        # PatchCore score on first detection
         pc_score = None
-        if yolo_dets and pc.memory_bank is not None:
-            det  = yolo_dets[0]
-            patch = frame[det["y1"]:det["y2"], det["x1"]:det["x2"]]
+        import torch
+        if pc.memory_bank is not None:
+            det   = yolo_dets[0]
+            patch = frame[max(0,det["y1"]):det["y2"], max(0,det["x1"]):det["x2"]]
             if patch.size > 0:
                 pc_score = pc.score(patch)
+                # Also print raw L2 distance for calibration
+                feat  = pc._extract_features(patch)
+                diffs = pc.memory_bank - feat.unsqueeze(0)
+                dists = torch.norm(diffs, dim=1)
+                min_dist = dists.min().item()
 
         alerts = fusion.fuse(frame, yolo_dets, cands, pc)
 
         log.info(
-            f"Frame {i:02d}: YOLO={len(yolo_dets)} dets | "
-            f"Flow={len(cands)} cands | "
-            f"PC_score={f'{pc_score:.3f}' if pc_score is not None else 'N/A'} | "
+            f"Video frame {frame_idx}/{total} | "
+            f"YOLO={len(yolo_dets)} | "
+            f"Flow cands={len(cands)} | "
+            f"PC_score={f'{pc_score:.4f}' if pc_score is not None else 'N/A'} | "
+            f"Min_L2={f'{min_dist:.2f}' if pc_score is not None else 'N/A'} | "
             f"PC_vote={1 if pc_score is not None and pc_score >= pc.anomaly_threshold else 0} | "
             f"Alerts={len(alerts)}"
         )
 
-    log.info(f"PatchCore threshold: {pc.anomaly_threshold}")
-    log.info(f"Votes required: {cfg.get('fusion','votes_required',default=2)}")
+    cap.release()
+    log.info(f"PatchCore threshold : {pc.anomaly_threshold}")
+    log.info(f"Votes required      : {cfg.get('fusion','votes_required',default=2)}")
+    log.info("--- Calibration hint ---")
+    log.info("If Min_L2 >> 10, the scale=10 in patchcore.py is too small → scores near 1 always")
+    log.info("If Min_L2 << 10, the scale=10 is too large → scores near 0 always")
 
 
 def main():
