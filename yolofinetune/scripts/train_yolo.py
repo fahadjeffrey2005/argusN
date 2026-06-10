@@ -118,16 +118,30 @@ def train(cfg_path: str = "config/config.yaml", overrides: dict = None):
     )
 
     # Copy best weights to expected path
-    best_src = Path("models/yolo/runs/finetuned/weights/best.pt")
+    # Use results.save_dir to find where ultralytics actually saved the run
+    import shutil
     best_dst = Path(output_path)
     best_dst.parent.mkdir(parents=True, exist_ok=True)
 
-    if best_src.exists():
-        import shutil
+    save_dir = Path(results.save_dir) if hasattr(results, "save_dir") else None
+    candidates = []
+    if save_dir:
+        candidates.append(save_dir / "weights" / "best.pt")
+    # Fallback: search common locations
+    candidates += [
+        Path("models/yolo/runs/finetuned/weights/best.pt"),
+        Path("runs/detect/finetuned/weights/best.pt"),
+    ]
+    # Also glob for any best.pt under runs/
+    candidates += sorted(Path(".").glob("**/runs/**/finetuned/weights/best.pt"))
+
+    best_src = next((p for p in candidates if p.exists()), None)
+
+    if best_src:
         shutil.copy(best_src, best_dst)
-        log.info(f"Best weights saved → {best_dst}")
+        log.info(f"Best weights saved → {best_dst}  (from {best_src})")
     else:
-        log.warning(f"Expected best.pt not found at {best_src}")
+        log.warning("best.pt not found in any expected location — check runs/ manually")
 
     log.info("Training complete.")
     return results
