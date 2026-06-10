@@ -18,7 +18,8 @@ flow:
 
 imu:
   enabled: false
-  simulated_speed_kmh: 30.0
+  simulated_speed_kmh: 0.0   # 0 = no egomotion subtraction (for static/lab footage)
+                               # set to actual speed (km/h) when running on moving vehicle
 
 egomotion:
   camera_height_m: 0.325

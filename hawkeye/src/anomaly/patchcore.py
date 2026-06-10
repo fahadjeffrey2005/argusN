@@ -227,8 +227,10 @@ class PatchCore:
             min_dist = distances.min().item()
 
             # Normalise to [0, 1] using exponential decay
-            # Scale factor calibrated for typical WideResNet50 feature distances
-            scale = 10.0
+            # Scale calibrated from observed L2 distances on this dataset:
+            # FOD patches show min_L2 ~2.1-2.7, clean tarmac ~0.5-1.5
+            # scale=2.0 maps L2=2.5 → score=0.71, L2=1.0 → score=0.39
+            scale = 2.0
             score = 1.0 - np.exp(-min_dist / scale)
             score = float(np.clip(score, 0.0, 1.0))
 
