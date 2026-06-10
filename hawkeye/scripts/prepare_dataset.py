@@ -58,24 +58,50 @@ def download_dataset(api_key: str, workspace: str, project: str,
 
 def fix_structure(dataset_root: Path) -> None:
     """
-    Roboflow YOLOv8 download uses 'valid/' — rename to 'val/'.
-    Works in-place on the downloaded folder.
+    Roboflow YOLOv8 downloads come in two possible layouts:
+
+    Layout A (split-first):          Layout B (type-first):
+      train/images/                    images/train/
+      train/labels/                    images/valid/
+      valid/images/                    labels/train/
+      valid/labels/                    labels/valid/
+      test/images/
+      test/labels/
+
+    We normalise both into:
+      images/train/  images/val/  images/test/
+      labels/train/  labels/val/  labels/test/
     """
-    for split_dir in ["images", "labels"]:
-        src = dataset_root / split_dir / "valid"
-        dst = dataset_root / split_dir / "val"
+    import shutil
+
+    # Detect Layout A: split-first (train/, valid/, test/ at root)
+    if (dataset_root / "train").exists() or (dataset_root / "valid").exists():
+        print("  Detected Roboflow Layout A (split/type) — reorganising...")
+        for split_rf, split_out in [("train", "train"), ("valid", "val"), ("test", "test")]:
+            for kind in ["images", "labels"]:
+                src = dataset_root / split_rf / kind
+                dst = dataset_root / kind / split_out
+                if src.exists():
+                    dst.mkdir(parents=True, exist_ok=True)
+                    for f in src.iterdir():
+                        shutil.copy2(f, dst / f.name)
+                    print(f"  Copied {split_rf}/{kind} → {kind}/{split_out} ({len(list(dst.iterdir()))} files)")
+
+        # Remove the old split-first dirs
+        for split_rf in ["train", "valid", "test"]:
+            old = dataset_root / split_rf
+            if old.exists():
+                shutil.rmtree(old)
+                print(f"  Removed staging dir: {split_rf}/")
+        return
+
+    # Detect Layout B: type-first with 'valid' (images/valid/, labels/valid/)
+    for kind in ["images", "labels"]:
+        src = dataset_root / kind / "valid"
+        dst = dataset_root / kind / "val"
         if src.exists() and not dst.exists():
             src.rename(dst)
-            print(f"  Renamed {split_dir}/valid → {split_dir}/val")
-        elif dst.exists():
-            print(f"  {split_dir}/val already exists — skipping rename")
-
-    # Also rename at top level if Roboflow put a valid/ folder there
-    top_valid = dataset_root / "valid"
-    top_val   = dataset_root / "val"
-    if top_valid.exists() and not top_val.exists():
-        top_valid.rename(top_val)
-        print("  Renamed top-level valid/ → val/")
+            print(f"  Renamed {kind}/valid → {kind}/val")
 
 
 def remap_classes(dataset_root: Path) -> None:
