@@ -27,6 +27,7 @@ import cv2
 import sys
 import time
 import argparse
+import numpy as np
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
