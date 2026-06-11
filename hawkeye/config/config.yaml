@@ -7,14 +7,14 @@ camera:
 
 yolo:
   model_path: models/yolo/finetuned/best.pt
-  confidence_threshold: 0.28   # lower — catch small/borderline FODs
+  confidence_threshold: 0.35
   iou_threshold: 0.45
   input_size: 640
 
 tracker:
-  confirm_frames: 2      # 2 consecutive frames to confirm — more sensitive
-  iou_threshold: 0.20    # lower — easier matching for small boxes across frames
-  max_miss_frames: 3     # more forgiving — track survives a missed frame
+  confirm_frames: 3      # 3 consecutive frames — filters transient false flags
+  iou_threshold: 0.25
+  max_miss_frames: 2
 
 pipeline:
   top_crop: 0.50         # was 0.60 — include more frame for distant/small FODs
