@@ -7,7 +7,7 @@ camera:
 
 yolo:
   model_path: models/yolo/finetuned/best.pt
-  confidence_threshold: 0.50   # raised from 0.35 — reduces YOLO over-detection
+  confidence_threshold: 0.35   # back to original — 0.50 was missing real FODs
   iou_threshold: 0.45
   input_size: 640
 
@@ -38,8 +38,8 @@ fusion:
   patchcore_weight: 1
 
 pipeline:
-  top_crop: 0.22
-  bot_crop: 0.15
+  top_crop: 0.60   # cut top 60% — distant runway with shadows/gradients
+  bot_crop: 0.05   # small trim for vehicle edge only
   warmup_frames: 30
 
 outputs:
