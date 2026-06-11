@@ -1,6 +1,6 @@
 # HAWKEYE — Evaluation Report
 
-_Generated: 2026-06-11 11:36_
+_Generated: 2026-06-11 16:06_
 
 ## Model
 **HAWKEYE** — Multi-stack FOD detector: fine-tuned YOLOv8 + Farneback optical flow egomotion residual + PatchCore unsupervised anomaly detection. Alert raised when 2 or more of 3 components vote positive.
@@ -14,15 +14,15 @@ _Generated: 2026-06-11 11:36_
 | Precision | 0.8568 | 0.7972 |  (▲ +0.0597✓) |
 | Recall | 0.7143 | 0.7778 |  (▼ -0.0635✗) |
 | F1 Score | 0.7791 | 0.7873 |  (▼ -0.0083✗) |
-| False Positive Rate (per min) | 114.47 | — |  |
-| Latency (ms/frame) | 220.87 | 10.94 |  (▲ +209.94✗) |
-| Inference FPS | 4.5 | 91.4 |  (▼ -86.9✗) |
+| False Positive Rate (per min) | 51.36 | — |  |
+| Latency (ms/frame) | 9.03 | 10.94 |  (▼ -1.91✓) |
+| Inference FPS | 110.7 | 91.4 |  (▲ +19.3✓) |
 
 ## Commentary
 
 **Detection (mAP50):** HAWKEYE scores slightly below YOLOFINETUNE (0.7521 vs 0.8297, Δ=-0.0776). This is expected — the fusion gate can suppress correct YOLO detections if the other two components don't agree.
 
-**Inference Speed:** HAWKEYE runs at 4.5 fps vs YOLOFINETUNE's 91.4 fps. The PatchCore nearest-neighbour search accounts for the additional latency (~15-30ms). PRIME addresses this with a fixed-size CNN classifier.
+**Inference Speed:** HAWKEYE runs at 110.7 fps vs YOLOFINETUNE's 91.4 fps. The PatchCore nearest-neighbour search accounts for the additional latency (~15-30ms). PRIME addresses this with a fixed-size CNN classifier.
 
 ## Known Weaknesses (by design)
 
