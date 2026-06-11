@@ -98,50 +98,53 @@ class PatchCore:
             self.logger.error(f"Backbone load failed: {e}")
             self.backbone = None
 
-    def _preprocess(self, image: np.ndarray) -> torch.Tensor:
+    def _preprocess_batch(self, images: list) -> torch.Tensor:
         """
-        Preprocess BGR image for WideResNet50.
-        Resize to 224x224, normalise with ImageNet mean/std.
-
-        Returns tensor (1, 3, 224, 224)
+        Preprocess a list of BGR images into a batch tensor.
+        Returns (N, 3, 224, 224) on device.
         """
-        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        resized = cv2.resize(rgb, (224, 224))
-        tensor = torch.from_numpy(resized).float() / 255.0
-
         mean = torch.tensor([0.485, 0.456, 0.406])
-        std = torch.tensor([0.229, 0.224, 0.225])
-        tensor = (tensor - mean) / std
-        tensor = tensor.permute(2, 0, 1).unsqueeze(0)  # (1, 3, 224, 224)
-        return tensor.to(self.device)
+        std  = torch.tensor([0.229, 0.224, 0.225])
+        tensors = []
+        for image in images:
+            rgb     = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            resized = cv2.resize(rgb, (224, 224))
+            t = torch.from_numpy(resized).float() / 255.0
+            t = (t - mean) / std
+            tensors.append(t.permute(2, 0, 1))         # (3, 224, 224)
+        return torch.stack(tensors, dim=0).to(self.device)  # (N, 3, 224, 224)
 
-    def _extract_features(self, image: np.ndarray) -> torch.Tensor:
+    def _preprocess(self, image: np.ndarray) -> torch.Tensor:
+        """Single image → (1, 3, 224, 224). Used for bank building."""
+        return self._preprocess_batch([image])
+
+    def _extract_features_batch(self, images: list) -> torch.Tensor:
         """
-        Forward pass through backbone, collect hook outputs,
-        adaptive-pool and concatenate into a single feature vector.
-
-        Returns: (D,) feature vector
+        One forward pass for a batch of images.
+        Returns (N, D) feature matrix — N images, D feature dims.
         """
         if self.backbone is None:
             raise RuntimeError("Backbone not loaded")
 
-        tensor = self._preprocess(image)
+        batch = self._preprocess_batch(images)        # (N, 3, 224, 224)
         self.feature_hooks.clear()
 
         with torch.no_grad():
-            self.backbone(tensor)
+            self.backbone(batch)
 
         feature_vectors = []
         for layer_name in self.layers:
             if layer_name not in self.feature_hooks:
                 continue
-            feat = self.feature_hooks[layer_name]  # (1, C, H, W)
-            # Adaptive average pool to (1, C, 1, 1)
-            pooled = nn.functional.adaptive_avg_pool2d(feat, (1, 1))
-            feature_vectors.append(pooled.squeeze())  # (C,)
+            feat   = self.feature_hooks[layer_name]   # (N, C, H, W)
+            pooled = nn.functional.adaptive_avg_pool2d(feat, (1, 1))  # (N, C, 1, 1)
+            feature_vectors.append(pooled.squeeze(-1).squeeze(-1))    # (N, C)
 
-        combined = torch.cat(feature_vectors, dim=0)  # (D,)
-        return combined
+        return torch.cat(feature_vectors, dim=1)       # (N, D)
+
+    def _extract_features(self, image: np.ndarray) -> torch.Tensor:
+        """Single image feature extraction. Returns (D,)."""
+        return self._extract_features_batch([image])[0]
 
     def build_bank(self, clean_frames: list) -> None:
         """
@@ -239,6 +242,37 @@ class PatchCore:
         except Exception as e:
             self.logger.warning(f"PatchCore score failed: {e}")
             return 0.0
+
+    def score_batch(self, patches: list) -> list:
+        """
+        Score a list of patches in ONE forward pass — the fast path.
+        Returns list of float scores, one per patch.
+        Use this instead of calling score() in a loop.
+        """
+        if self.backbone is None or self.memory_bank is None:
+            return [0.0] * len(patches)
+
+        valid = [(i, p) for i, p in enumerate(patches) if p is not None and p.size > 0]
+        if not valid:
+            return [0.0] * len(patches)
+
+        try:
+            idxs, valid_patches = zip(*valid)
+            feats    = self._extract_features_batch(list(valid_patches))  # (M, D)
+            scale    = 2.0
+            scores   = [0.0] * len(patches)
+
+            for j, feat in enumerate(feats):
+                diffs    = self.memory_bank - feat.unsqueeze(0)
+                min_dist = torch.norm(diffs, dim=1).min().item()
+                s        = float(np.clip(1.0 - np.exp(-min_dist / scale), 0.0, 1.0))
+                scores[idxs[j]] = s
+
+            return scores
+
+        except Exception as e:
+            self.logger.warning(f"PatchCore score_batch failed: {e}")
+            return [0.0] * len(patches)
 
     def is_anomalous(self, patch: np.ndarray) -> tuple:
         """

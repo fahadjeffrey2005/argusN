@@ -45,7 +45,7 @@ class FarnebackFlow:
 
         self.logger.info("FarnebackFlow initialised")
 
-    def compute(self, frame: np.ndarray) -> np.ndarray | None:
+    def compute(self, frame: np.ndarray, scale: float = 0.5) -> np.ndarray | None:
         """
         Compute dense optical flow between previous frame and current frame.
 
@@ -62,14 +62,23 @@ class FarnebackFlow:
         """
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
+        # Compute at reduced resolution for speed, then upscale
+        # scale=0.5 → 4x fewer pixels → ~3x faster, minimal quality loss
+        if scale < 1.0:
+            h, w  = gray.shape
+            sh, sw = int(h * scale), int(w * scale)
+            gray_small = cv2.resize(gray, (sw, sh))
+        else:
+            gray_small = gray
+
         if self.prev_gray is None:
-            self.prev_gray = gray
+            self.prev_gray = gray_small
             self.logger.debug("First frame stored — flow computation starts next frame")
             return None
 
-        flow = cv2.calcOpticalFlowFarneback(
+        flow_small = cv2.calcOpticalFlowFarneback(
             self.prev_gray,
-            gray,
+            gray_small,
             None,
             pyr_scale=self.pyr_scale,
             levels=self.levels,
@@ -80,7 +89,15 @@ class FarnebackFlow:
             flags=0
         )
 
-        self.prev_gray = gray
+        self.prev_gray = gray_small
+
+        # Upscale flow back to original frame size and correct magnitude
+        if scale < 1.0:
+            h, w  = frame.shape[:2]
+            flow  = cv2.resize(flow_small, (w, h)) / scale
+        else:
+            flow = flow_small
+
         return flow  # (H, W, 2)
 
     def magnitude_map(self, flow: np.ndarray) -> np.ndarray:

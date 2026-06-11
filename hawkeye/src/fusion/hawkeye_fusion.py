@@ -154,14 +154,16 @@ class HawkeyeFusion:
         if not merged:
             return []
 
-        alerts = []
-        for candidate in merged:
-            yolo_vote = int(candidate["yolo_vote"])
-            flow_vote = int(candidate["flow_vote"])
+        # ── Batch PatchCore scoring — ONE forward pass for all candidates ──
+        patches    = [patchcore.extract_patch(frame, c) for c in merged]
+        pc_scores  = patchcore.score_batch(patches)
+        pc_thresh  = patchcore.anomaly_threshold
 
-            # PatchCore vote
-            patch = patchcore.extract_patch(frame, candidate)
-            pc_anomalous, pc_score = patchcore.is_anomalous(patch)
+        alerts = []
+        for candidate, pc_score in zip(merged, pc_scores):
+            yolo_vote    = int(candidate["yolo_vote"])
+            flow_vote    = int(candidate["flow_vote"])
+            pc_anomalous = pc_score >= pc_thresh
             patchcore_vote = int(pc_anomalous)
 
             total_votes = yolo_vote + flow_vote + patchcore_vote
