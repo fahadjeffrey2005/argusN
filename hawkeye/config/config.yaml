@@ -3,45 +3,22 @@ device: cuda
 camera:
   input_mode: video_file
   video_file_path: data/raw/videos/recording.mp4
-  fps: 60
+  fps: 30
 
 yolo:
   model_path: models/yolo/finetuned/best.pt
-  confidence_threshold: 0.35   # back to original — 0.50 was missing real FODs
+  confidence_threshold: 0.35
   iou_threshold: 0.45
   input_size: 640
 
-flow:
-  residual_threshold: 4.0      # raised from 2.5 — ignores micro-vibration/compression noise
-  min_anomaly_area_px: 500     # raised from 10 — only physically meaningful objects
-  max_anomaly_area_px: 50000
-
-imu:
-  enabled: false
-  simulated_speed_kmh: 0.0   # 0 = no egomotion subtraction (for static/lab footage)
-                               # set to actual speed (km/h) when running on moving vehicle
-
-egomotion:
-  camera_height_m: 0.325
-  focal_length_px: 1200.0
-
-patchcore:
-  bank_path: models/patchcore/bank.pt
-  anomaly_threshold: 0.70
-  backbone: wide_resnet50_2
-  layers: [layer2, layer3]
-
-fusion:
-  votes_required: 2
-  require_yolo_vote: true   # YOLO must vote — prevents flow+PatchCore false alerts on texture noise
-  yolo_weight: 1
-  flow_weight: 1
-  patchcore_weight: 1
+tracker:
+  confirm_frames: 4      # consecutive frames to confirm FOD (filters transient false flags)
+  iou_threshold: 0.35    # IoU to match detection to existing track
+  max_miss_frames: 2     # frames a track can miss before being dropped
 
 pipeline:
-  top_crop: 0.60   # cut top 60% — distant runway with shadows/gradients
-  bot_crop: 0.05   # small trim for vehicle edge only
-  warmup_frames: 30
+  top_crop: 0.60         # cut top 60% — distant runway with shadows/gradients
+  bot_crop: 0.05         # small trim for vehicle edge
 
 outputs:
   detections_path: outputs/detections
