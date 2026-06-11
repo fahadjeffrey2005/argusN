@@ -7,18 +7,18 @@ camera:
 
 yolo:
   model_path: models/yolo/finetuned/best.pt
-  confidence_threshold: 0.35
+  confidence_threshold: 0.28   # lower — catch small/borderline FODs
   iou_threshold: 0.45
   input_size: 640
 
 tracker:
-  confirm_frames: 4      # consecutive frames to confirm FOD (filters transient false flags)
-  iou_threshold: 0.35    # IoU to match detection to existing track
-  max_miss_frames: 2     # frames a track can miss before being dropped
+  confirm_frames: 2      # 2 consecutive frames to confirm — more sensitive
+  iou_threshold: 0.20    # lower — easier matching for small boxes across frames
+  max_miss_frames: 3     # more forgiving — track survives a missed frame
 
 pipeline:
-  top_crop: 0.60         # cut top 60% — distant runway with shadows/gradients
-  bot_crop: 0.05         # small trim for vehicle edge
+  top_crop: 0.50         # was 0.60 — include more frame for distant/small FODs
+  bot_crop: 0.05
 
 outputs:
   detections_path: outputs/detections
