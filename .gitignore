@@ -37,6 +37,12 @@ data/replay_buffer/pending/
 
 outputs/
 
+# Video files — too large for git, transfer via scp/Google Drive
+*.mp4
+*.avi
+*.mov
+*.mkv
+
 logs/
 
 __pycache__/
