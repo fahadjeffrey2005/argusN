@@ -1,11 +1,12 @@
 """
 PRIME — train_cnn.py
-Trains the MobileNetV3-Small 4-channel CNN classifier.
-Reads labeled crops from data/crops/<class_name>/*.png
+Trains the MobileNetV3-Small 4-channel CNN classifier on labeled crops.
+Reads from data/crops/<class_name>/*.png
 Saves best weights to models/cnn/prime_classifier.pth
 
-Usage:
-    python scripts/train_cnn.py --config config/config.yaml
+Usage (from inside prime/ on Ubuntu):
+    python scripts/train_cnn.py
+    python scripts/train_cnn.py --crops-dir data/crops --epochs 30
 """
 
 import argparse
@@ -31,18 +32,17 @@ CLASS_NAMES = ["fod", "shadow", "runway_marking", "strobe_light", "clean_tarmac"
 
 class CropDataset(Dataset):
     def __init__(self, crops_root: Path):
-        import cv2
         self.samples = []
         for class_id, class_name in enumerate(CLASS_NAMES):
             class_dir = crops_root / class_name
             if not class_dir.exists():
                 continue
-            for crop_path in class_dir.glob("*.png"):
-                self.samples.append((crop_path, class_id))
+            for p in sorted(class_dir.glob("*.png")):
+                self.samples.append((p, class_id))
 
         if not self.samples:
             raise RuntimeError(
-                f"No labeled crops found in {crops_root}. "
+                f"No labeled crops in {crops_root}.\n"
                 f"Run collect_crops.py then label_crops.py first."
             )
 
@@ -54,167 +54,141 @@ class CropDataset(Dataset):
         path, label = self.samples[idx]
         img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
 
-        if img is None or img.ndim < 3:
-            # Fallback: return zeros
+        if img is None or img.ndim < 2:
             return torch.zeros(4, 128, 128), label
 
-        if img.shape[2] == 3:
-            # Add zero flow channel if only 3-channel saved
-            zero_flow = np.zeros((*img.shape[:2], 1), dtype=img.dtype)
-            img = np.concatenate([img, zero_flow], axis=2)
+        # Ensure 4 channels
+        if img.ndim == 2:
+            img = np.stack([img, img, img, np.zeros_like(img)], axis=2)
+        elif img.shape[2] == 3:
+            img = np.concatenate([img, np.zeros((*img.shape[:2], 1), dtype=img.dtype)], axis=2)
 
-        # (H, W, 4) → (4, H, W), normalise
-        crop = img.astype(np.float32) / 255.0
-        crop = np.transpose(crop, (2, 0, 1))
+        crop = img.astype(np.float32) / 255.0       # (H, W, 4)
+        crop = np.transpose(crop, (2, 0, 1))         # (4, H, W)
         return torch.from_numpy(crop), label
 
 
-def get_class_weights(dataset: CropDataset, device: str) -> torch.Tensor:
-    """Compute inverse-frequency class weights for imbalanced data."""
+def class_weights(dataset: CropDataset, device: str) -> torch.Tensor:
     counts = [0] * len(CLASS_NAMES)
-    for _, label in dataset.samples:
-        counts[label] += 1
+    for _, lbl in dataset.samples:
+        counts[lbl] += 1
     total = sum(counts)
-    weights = [total / (len(CLASS_NAMES) * max(c, 1)) for c in counts]
-    return torch.tensor(weights, dtype=torch.float).to(device)
+    w = [total / (len(CLASS_NAMES) * max(c, 1)) for c in counts]
+    return torch.tensor(w, dtype=torch.float).to(device)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Train PRIME CNN classifier")
-    parser.add_argument("--config", default="config/config.yaml")
-    parser.add_argument("--crops-dir", default="data/crops", help="Root of labeled crops")
-    parser.add_argument("--resume", action="store_true", help="Resume from existing weights")
+    parser.add_argument("--config",    default="config/config.yaml")
+    parser.add_argument("--crops-dir", default="data/crops")
+    parser.add_argument("--epochs",    type=int, default=None)
+    parser.add_argument("--resume",    action="store_true")
     args = parser.parse_args()
 
-    cfg = load_config(args.config)
-    logger = get_logger(
-        "train_cnn",
-        cfg.get("logging", "log_path", default="logs/prime.log"),
-        cfg.get("logging", "level", default="INFO")
-    )
+    cfg    = load_config(args.config)
+    logger = get_logger("train_cnn",
+                        cfg.get("logging", "log_path", default="logs/prime.log"),
+                        cfg.get("logging", "level", default="INFO"))
 
-    device = cfg.device
-    epochs = cfg.get("cnn", "epochs", default=30)
-    batch_size = cfg.get("cnn", "batch_size", default=32)
-    lr = cfg.get("cnn", "learning_rate", default=0.0005)
+    device   = cfg.device
+    epochs   = args.epochs or cfg.get("cnn", "epochs", default=30)
+    batch    = cfg.get("cnn", "batch_size", default=32)
+    lr       = cfg.get("cnn", "learning_rate", default=0.0005)
     patience = cfg.get("cnn", "early_stopping_patience", default=5)
-    model_path = cfg.get("cnn", "model_path", default="models/cnn/prime_classifier.pth")
+    out_path = cfg.get("cnn", "model_path", default="models/cnn/prime_classifier.pth")
 
-    # ── Dataset ────────────────────────────────────────────────────
-    crops_root = Path(args.crops_dir)
-    dataset = CropDataset(crops_root)
+    # ── Dataset ───────────────────────────────────────────
+    dataset = CropDataset(Path(args.crops_dir))
+    logger.info(f"Dataset: {len(dataset)} crops")
+    for cid, cname in enumerate(CLASS_NAMES):
+        n = sum(1 for _, l in dataset.samples if l == cid)
+        logger.info(f"  {cname}: {n}")
 
-    logger.info(f"Dataset: {len(dataset)} crops across {len(CLASS_NAMES)} classes")
-    for class_id, class_name in enumerate(CLASS_NAMES):
-        count = sum(1 for _, lbl in dataset.samples if lbl == class_id)
-        logger.info(f"  {class_name}: {count}")
+    val_n   = max(1, int(len(dataset) * 0.2))
+    train_n = len(dataset) - val_n
+    train_set, val_set = random_split(dataset, [train_n, val_n])
 
-    # 80/20 train/val split
-    val_size = max(1, int(len(dataset) * 0.2))
-    train_size = len(dataset) - val_size
-    train_set, val_set = random_split(dataset, [train_size, val_size])
+    train_loader = DataLoader(train_set, batch_size=batch, shuffle=True,  num_workers=2, pin_memory=True)
+    val_loader   = DataLoader(val_set,   batch_size=batch, shuffle=False, num_workers=2, pin_memory=True)
 
-    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=2)
-    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=2)
+    # ── Model ─────────────────────────────────────────────
+    clf = CNNClassifier(cfg)
+    if not args.resume:
+        # Build fresh — don't load potentially absent saved weights
+        clf.model = clf._build_model().to(device)
+    clf.set_train_mode()
 
-    # ── Model ──────────────────────────────────────────────────────
-    # Build directly (don't load trained weights if starting fresh)
-    classifier = CNNClassifier(cfg)
-    if args.resume and Path(model_path).exists():
-        logger.info(f"Resuming from {model_path}")
-    else:
-        # Re-build fresh model (without loading potentially absent weights)
-        classifier.model = classifier._build_model().to(device)
-
-    classifier.set_train_mode()
-
-    # ── Loss, optimiser ────────────────────────────────────────────
-    class_weights = get_class_weights(dataset, device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
-    optimizer = optim.Adam(classifier.model.parameters(), lr=lr)
+    # ── Training ──────────────────────────────────────────
+    cw        = class_weights(dataset, device)
+    criterion = nn.CrossEntropyLoss(weight=cw)
+    optimizer = optim.Adam(clf.model.parameters(), lr=lr)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
 
-    # ── Training loop ──────────────────────────────────────────────
-    best_val_loss = float("inf")
+    best_val  = float("inf")
     no_improve = 0
-    history = []
+    history   = []
+
+    logger.info(f"Training for up to {epochs} epochs on {device}")
 
     for epoch in range(1, epochs + 1):
         # Train
-        classifier.set_train_mode()
-        train_loss = 0.0
-        train_correct = 0
-
-        for crops, labels in tqdm(train_loader, desc=f"Epoch {epoch}/{epochs} [train]", leave=False):
-            crops = crops.to(device)
-            labels = labels.to(device)
-
+        clf.set_train_mode()
+        t_loss = t_correct = 0
+        for crops, labels in tqdm(train_loader, desc=f"Ep {epoch:03d} train", leave=False):
+            crops, labels = crops.to(device), labels.to(device)
             optimizer.zero_grad()
-            logits = classifier.model(crops)
-            loss = criterion(logits, labels)
+            logits = clf.model(crops)
+            loss   = criterion(logits, labels)
             loss.backward()
             optimizer.step()
+            t_loss    += loss.item() * crops.size(0)
+            t_correct += (logits.argmax(1) == labels).sum().item()
 
-            train_loss += loss.item() * crops.size(0)
-            train_correct += (logits.argmax(1) == labels).sum().item()
-
-        train_loss /= train_size
-        train_acc = train_correct / train_size
+        t_loss /= train_n
+        t_acc   = t_correct / train_n
 
         # Validate
-        classifier.set_eval_mode()
-        val_loss = 0.0
-        val_correct = 0
-
+        clf.set_eval_mode()
+        v_loss = v_correct = 0
         with torch.no_grad():
             for crops, labels in val_loader:
-                crops = crops.to(device)
-                labels = labels.to(device)
-                logits = classifier.model(crops)
-                loss = criterion(logits, labels)
-                val_loss += loss.item() * crops.size(0)
-                val_correct += (logits.argmax(1) == labels).sum().item()
+                crops, labels = crops.to(device), labels.to(device)
+                logits = clf.model(crops)
+                v_loss    += criterion(logits, labels).item() * crops.size(0)
+                v_correct += (logits.argmax(1) == labels).sum().item()
 
-        val_loss /= val_size
-        val_acc = val_correct / val_size
-
-        scheduler.step(val_loss)
+        v_loss /= val_n
+        v_acc   = v_correct / val_n
+        scheduler.step(v_loss)
 
         logger.info(
-            f"Epoch {epoch:3d}/{epochs} | "
-            f"train_loss={train_loss:.4f} acc={train_acc:.3f} | "
-            f"val_loss={val_loss:.4f} acc={val_acc:.3f}"
+            f"Ep {epoch:03d}/{epochs} | "
+            f"train loss={t_loss:.4f} acc={t_acc:.3f} | "
+            f"val loss={v_loss:.4f} acc={v_acc:.3f}"
         )
+        history.append({"epoch": epoch, "train_loss": round(t_loss,4),
+                         "train_acc": round(t_acc,4), "val_loss": round(v_loss,4),
+                         "val_acc": round(v_acc,4)})
 
-        history.append({
-            "epoch": epoch,
-            "train_loss": round(train_loss, 4),
-            "train_acc": round(train_acc, 4),
-            "val_loss": round(val_loss, 4),
-            "val_acc": round(val_acc, 4)
-        })
-
-        # Save best
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        if v_loss < best_val:
+            best_val   = v_loss
             no_improve = 0
-            classifier.save_weights(model_path)
-            logger.info(f"  → Best model saved (val_loss={val_loss:.4f})")
+            clf.save_weights(out_path)
+            logger.info(f"  ✓ Best saved (val_loss={v_loss:.4f})")
         else:
             no_improve += 1
             if no_improve >= patience:
                 logger.info(f"Early stopping at epoch {epoch}")
                 break
 
-    # Save training history
-    history_path = Path("logs/train_history.json")
-    history_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(history_path, "w") as f:
-        json.dump(history, f, indent=2)
+    hist_path = Path("logs/train_history.json")
+    hist_path.parent.mkdir(exist_ok=True)
+    hist_path.write_text(json.dumps(history, indent=2))
 
-    logger.info(f"Training complete. Best val_loss={best_val_loss:.4f}")
-    logger.info(f"Weights → {model_path}")
-    logger.info(f"History → {history_path}")
+    logger.info(f"\nTraining complete.")
+    logger.info(f"  Best val_loss : {best_val:.4f}")
+    logger.info(f"  Weights       : {out_path}")
+    logger.info(f"  History       : {hist_path}")
 
 
 if __name__ == "__main__":

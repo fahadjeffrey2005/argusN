@@ -126,11 +126,14 @@ class PrimeFusion:
                     f"Matched: YOLO[{yi}] ↔ flow[{best_fi}] IoU={best_iou:.2f} → both"
                 )
             else:
-                # YOLO only
+                # YOLO only — YOLO dicts only have x1/y1/x2/y2, compute x/y/w/h
+                _x1, _y1, _x2, _y2 = yc["x1"], yc["y1"], yc["x2"], yc["y2"]
                 merged.append({
-                    **{k: yc[k] for k in ("x1", "y1", "x2", "y2", "x", "y", "w", "h")},
-                    "cx": (yc["x1"] + yc["x2"]) / 2,
-                    "cy": (yc["y1"] + yc["y2"]) / 2,
+                    "x1": _x1, "y1": _y1, "x2": _x2, "y2": _y2,
+                    "x": _x1, "y": _y1,
+                    "w": _x2 - _x1, "h": _y2 - _y1,
+                    "cx": (_x1 + _x2) / 2,
+                    "cy": (_y1 + _y2) / 2,
                     "tag": "yolo_only",
                     "yolo_confidence": yc.get("confidence", 0.0),
                     "flow_area": 0
@@ -140,10 +143,14 @@ class PrimeFusion:
         # Remaining flow candidates with no YOLO match
         for fi, fc in enumerate(flow_candidates):
             if fi not in matched_flow:
+                _x1, _y1 = fc["x1"], fc["y1"]
+                _x2, _y2 = fc["x2"], fc["y2"]
                 merged.append({
-                    **{k: fc[k] for k in ("x1", "y1", "x2", "y2", "x", "y", "w", "h")},
-                    "cx": fc.get("cx", (fc["x1"] + fc["x2"]) / 2),
-                    "cy": fc.get("cy", (fc["y1"] + fc["y2"]) / 2),
+                    "x1": _x1, "y1": _y1, "x2": _x2, "y2": _y2,
+                    "x": fc["x"], "y": fc["y"],
+                    "w": fc["w"], "h": fc["h"],
+                    "cx": fc.get("cx", (_x1 + _x2) / 2),
+                    "cy": fc.get("cy", (_y1 + _y2) / 2),
                     "tag": "flow_only",
                     "yolo_confidence": 0.0,
                     "flow_area": fc.get("area", 0)

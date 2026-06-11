@@ -1,21 +1,31 @@
 """
-PRIME — run_prime.py
-Full pipeline inference: YOLO + Farneback flow + CNN classifier.
-Reads from video file or USB camera, draws detections, saves alert frames.
+PRIME — Full Pipeline Inference
 
-Usage:
-    python scripts/run_prime.py --config config/config.yaml [--visualise] [--save]
+Pipeline:
+    1. YOLO detects candidates on ROI-cropped frame
+    2. Farneback flow → magnitude map (4th CNN channel)
+    3. CNN classifies each YOLO candidate → 5 classes
+    4. Only FOD-classified candidates enter the temporal tracker
+    5. Tracker confirms FODs present for >= confirm_frames consecutive frames → ALERT
+
+NOTE: On static footage the flow channel is near-zero.
+The CNN is trained to be robust with near-zero flow (treats it as clean_tarmac signal).
+
+Usage (from inside prime/):
+    python scripts/run_prime.py
+    python scripts/run_prime.py --source ../yolofinetune/data/raw/videos/fod_sessions/fod1.mp4
+    python scripts/run_prime.py --source ... --visualise --speed 30
 """
 
 import argparse
 import sys
 import time
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 import cv2
 import numpy as np
+from pathlib import Path
+from datetime import datetime
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.utils.config_loader import load_config
 from src.utils.logger import get_logger
@@ -23,151 +33,169 @@ from src.ingestion.camera import CameraIngestion
 from src.detection.yolo_detector import YOLODetector
 from src.flow.farneback import FarnebackFlow
 from src.flow.egomotion import Egomotion
-from src.flow.residual import FlowResidual
-from src.fusion.prime_fusion import PrimeFusion
 from src.semantic.crop_builder import CropBuilder
 from src.semantic.cnn_classifier import CNNClassifier
+from src.tracking.temporal_tracker import TemporalTracker
 
 
-def draw_fod_detections(frame: np.ndarray, fod_results: list) -> np.ndarray:
-    vis = frame.copy()
-    for classification, candidate in fod_results:
-        if not classification["is_fod"]:
-            continue
-        x1, y1, x2, y2 = candidate["x1"], candidate["y1"], candidate["x2"], candidate["y2"]
-        tag = candidate.get("tag", "")
-        conf = classification["confidence"]
-        label = f"FOD [{tag}] {conf:.2f}"
-
-        cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 0, 255), 2)
-        cv2.putText(
-            vis, label,
-            (x1, max(0, y1 - 8)),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2
-        )
-    return vis
+def apply_roi(frame, top_crop, bot_crop):
+    h = frame.shape[0]
+    y0 = int(h * top_crop)
+    y1 = int(h * (1.0 - bot_crop))
+    return frame[y0:y1, :], y0
 
 
 def main():
-    parser = argparse.ArgumentParser(description="PRIME full pipeline inference")
-    parser.add_argument("--config", default="config/config.yaml")
-    parser.add_argument("--visualise", action="store_true", help="Show live preview window")
-    parser.add_argument("--save", action="store_true", help="Save alert frames to outputs/")
+    parser = argparse.ArgumentParser(description="PRIME inference pipeline")
+    parser.add_argument("--source",    default=None)
+    parser.add_argument("--speed",     type=float, default=None)
+    parser.add_argument("--visualise", action="store_true")
+    parser.add_argument("--save",      action="store_true")
+    parser.add_argument("--config",    default="config/config.yaml")
     args = parser.parse_args()
 
-    cfg = load_config(args.config)
-    logger = get_logger(
-        "run_prime",
-        cfg.get("logging", "log_path", default="logs/prime.log"),
-        cfg.get("logging", "level", default="INFO")
-    )
+    cfg    = load_config(args.config)
+    logger = get_logger("run_prime",
+                        cfg.get("logging", "log_path", default="logs/prime.log"),
+                        cfg.get("logging", "level",    default="INFO"))
 
-    # ── Initialise components ───────────────────────────────────────
-    camera = CameraIngestion(cfg)
-    yolo = YOLODetector(cfg)
-    flow_engine = FarnebackFlow(cfg)
-    ego = Egomotion(cfg)
-    residual = FlowResidual(cfg)
-    fusion = PrimeFusion(cfg)
-    crop_builder = CropBuilder(cfg)
-    classifier = CNNClassifier(cfg)
+    if args.source and args.source != "camera":
+        cfg._cfg["camera"]["input_mode"]      = "video_file"
+        cfg._cfg["camera"]["video_file_path"] = args.source
+    if args.speed:
+        cfg._cfg["imu"]["simulated_speed_kmh"] = args.speed
 
-    detections_dir = Path(cfg.get("outputs", "detections_path", default="outputs/detections"))
+    top_crop = cfg.get("pipeline", "top_crop",      default=0.50)
+    bot_crop = cfg.get("pipeline", "bot_crop",      default=0.05)
+    warmup   = cfg.get("pipeline", "warmup_frames", default=30)
+
     alerts_dir = Path(cfg.get("outputs", "alerts_path", default="outputs/alerts"))
     if args.save:
-        detections_dir.mkdir(parents=True, exist_ok=True)
         alerts_dir.mkdir(parents=True, exist_ok=True)
 
-    top_crop = cfg.get("pipeline", "top_crop", default=0.22)
-    bot_crop = cfg.get("pipeline", "bot_crop", default=0.15)
-    warmup = cfg.get("pipeline", "warmup_frames", default=30)
+    logger.info("=" * 50)
+    logger.info("PRIME — Starting Inference")
+    logger.info("=" * 50)
 
+    # ── Components ─────────────────────────────────────────
+    camera     = CameraIngestion(cfg)
     camera.warmup(warmup)
+    yolo       = YOLODetector(cfg)
+    farneback  = FarnebackFlow(cfg)
+    egomotion  = Egomotion(cfg)
+    crop_bld   = CropBuilder(cfg)
+    classifier = CNNClassifier(cfg)
+    tracker    = TemporalTracker(cfg)
 
-    # ── Pipeline loop ──────────────────────────────────────────────
-    frame_idx = 0
-    alert_count = 0
-    t_start = time.time()
+    logger.info("All components ready")
 
-    logger.info("PRIME pipeline running — press q or ESC to stop")
+    frame_count = alert_count = 0
+    fps_times   = []
 
-    for frame in camera:
-        h = frame.shape[0]
-        y_start = int(h * top_crop)
-        y_end = int(h * (1 - bot_crop))
-        frame_roi = frame[y_start:y_end, :]
+    try:
+        while True:
+            t0 = time.perf_counter()
 
-        t0 = time.time()
-
-        # Optical flow
-        raw_flow = flow_engine.compute(frame_roi)
-        if raw_flow is None:
-            frame_idx += 1
-            continue
-
-        flow_mag = flow_engine.flow_magnitude(raw_flow)
-
-        # Egomotion expected flow
-        expected = ego.compute_expected_flow()
-        roi_h, roi_w = frame_roi.shape[:2]
-        expected_roi = cv2.resize(expected, (roi_w, roi_h))
-
-        # Flow residual candidates
-        _, _, flow_candidates = residual.compute(raw_flow, expected_roi)
-
-        # YOLO candidates
-        yolo_candidates = yolo.detect(frame_roi)
-
-        # Fusion
-        merged = fusion.merge(yolo_candidates, flow_candidates)
-
-        # Build 4-channel crops
-        crops_and_candidates = crop_builder.build_batch(frame_roi, flow_mag, merged)
-
-        # Classify
-        results = classifier.classify_batch(crops_and_candidates)
-
-        # Filter FODs
-        fod_results = [(c, cand) for c, cand in results if c["is_fod"]]
-
-        latency_ms = (time.time() - t0) * 1000
-        elapsed = time.time() - t_start
-        fps = frame_idx / max(elapsed, 0.001)
-
-        if fod_results:
-            alert_count += 1
-            logger.info(
-                f"Frame {frame_idx:06d} | "
-                f"FOD ALERT x{len(fod_results)} | "
-                f"{latency_ms:.1f}ms | {fps:.1f}fps"
-            )
-            if args.save:
-                vis = draw_fod_detections(frame_roi, fod_results)
-                out_path = alerts_dir / f"alert_{frame_idx:06d}.jpg"
-                cv2.imwrite(str(out_path), vis)
-
-        if args.visualise:
-            vis = draw_fod_detections(frame_roi, fod_results)
-            # Overlay stats
-            cv2.putText(vis, f"FPS: {fps:.1f}  Latency: {latency_ms:.1f}ms  Alerts: {alert_count}",
-                        (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            cv2.imshow("PRIME — FOD Detection", vis)
-            if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+            ret, frame = camera.read()
+            if not ret:
+                logger.info("End of stream")
                 break
 
-        frame_idx += 1
+            roi, y_offset = apply_roi(frame, top_crop, bot_crop)
+            roi_h, roi_w  = roi.shape[:2]
 
-    cv2.destroyAllWindows()
-    total_time = time.time() - t_start
-    avg_fps = frame_idx / max(total_time, 0.001)
+            # Step 1 — YOLO candidates
+            yolo_dets = yolo.detect(roi)
 
-    logger.info(
-        f"\nPipeline finished.\n"
-        f"  Frames processed : {frame_idx}\n"
-        f"  Total alerts     : {alert_count}\n"
-        f"  Avg FPS          : {avg_fps:.1f}\n"
-        f"  Total time       : {total_time:.1f}s"
-    )
+            # Step 2 — Flow magnitude for CNN 4th channel
+            flow = farneback.compute(roi)
+            if flow is not None:
+                flow_mag = farneback.magnitude_map(flow)
+            else:
+                flow_mag = np.zeros((roi_h, roi_w), dtype=np.float32)
+
+            # Step 3 — CNN: classify each YOLO candidate
+            # Build 4-channel crops from YOLO detections directly
+            crops   = crop_bld.build_batch(roi, flow_mag, yolo_dets)
+            results = classifier.classify_batch(crops)
+
+            # Step 4 — Filter: keep only CNN-confirmed FOD candidates
+            fod_candidates = []
+            for cls_result, candidate in results:
+                if cls_result["is_fod"]:
+                    fod_candidates.append({
+                        "x1": candidate["x1"], "y1": candidate["y1"],
+                        "x2": candidate["x2"], "y2": candidate["y2"],
+                        "confidence": cls_result["confidence"],
+                        "cnn_class": cls_result["class_name"],
+                    })
+
+            # Step 5 — Temporal confirmation
+            confirmed = tracker.update(fod_candidates)
+
+            t1       = time.perf_counter()
+            frame_ms = (t1 - t0) * 1000
+            fps_times.append(frame_ms)
+            if len(fps_times) > 60:
+                fps_times.pop(0)
+            avg_fps = 1000.0 / (sum(fps_times) / len(fps_times))
+
+            frame_count += 1
+
+            if confirmed:
+                alert_count += 1
+                logger.info(
+                    f"Frame {frame_count:05d} — "
+                    f"{len(confirmed)} FOD confirmed — "
+                    f"{avg_fps:.1f}fps — {frame_ms:.1f}ms"
+                )
+                if args.save:
+                    vis = roi.copy()
+                    for fod in confirmed:
+                        cv2.rectangle(vis, (fod["x1"], fod["y1"]),
+                                      (fod["x2"], fod["y2"]), (0, 0, 255), 2)
+                        cv2.putText(vis, f"FOD {fod['confidence']:.2f}",
+                                    (fod["x1"], max(0, fod["y1"]-6)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                    cv2.imwrite(str(alerts_dir / f"alert_{frame_count:05d}_{ts}.jpg"), vis)
+
+            if args.visualise:
+                vis = roi.copy()
+                for fod in confirmed:
+                    cv2.rectangle(vis, (fod["x1"], fod["y1"]),
+                                  (fod["x2"], fod["y2"]), (0, 0, 255), 2)
+                    cv2.putText(vis, f"FOD {fod['confidence']:.2f}",
+                                (fod["x1"], max(0, fod["y1"]-6)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
+                if confirmed:
+                    cv2.putText(vis, f"ALERT: {len(confirmed)} FOD",
+                                (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
+                cv2.putText(
+                    vis,
+                    f"Frame: {frame_count} | Alerts: {alert_count} | "
+                    f"{avg_fps:.1f}fps | {frame_ms:.1f}ms",
+                    (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2
+                )
+                cv2.imshow("PRIME", vis)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+
+    except KeyboardInterrupt:
+        logger.info("Interrupted")
+    finally:
+        camera.release()
+        if args.visualise:
+            cv2.destroyAllWindows()
+
+    avg_fps_f = (1000.0 / (sum(fps_times) / len(fps_times))) if fps_times else 0
+    logger.info("=" * 50)
+    logger.info(f"PRIME — Run complete")
+    logger.info(f"  Frames    : {frame_count}")
+    logger.info(f"  Alerts    : {alert_count}")
+    logger.info(f"  Avg FPS   : {avg_fps_f:.1f}")
+    logger.info(f"  Avg ms    : {1000/avg_fps_f:.1f}" if avg_fps_f > 0 else "")
+    logger.info("=" * 50)
 
 
 if __name__ == "__main__":

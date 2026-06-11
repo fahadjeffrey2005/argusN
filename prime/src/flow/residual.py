@@ -132,13 +132,12 @@ class FlowResidual:
             cx, cy = centroids[i]
 
             candidates.append({
-                "x": int(x),
-                "y": int(y),
-                "w": int(w),
-                "h": int(h),
+                "x":  int(x), "y":  int(y),
+                "w":  int(w), "h":  int(h),
+                "x1": int(x), "y1": int(y),
+                "x2": int(x + w), "y2": int(y + h),
                 "area": int(area),
-                "cx": float(cx),
-                "cy": float(cy)
+                "cx": float(cx), "cy": float(cy)
             })
 
         if candidates:

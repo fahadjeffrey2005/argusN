@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.so
+
+# Virtual environment
+venv/
+env/
+
+# Model weights — tracked explicitly with git add -f
+# (comment these out to exclude weights from git)
+# models/yolo/finetuned/best.pt
+# models/cnn/prime_classifier.pth
+
+# Data — large files, don't track in git
+data/raw/
+data/annotated/images/
+data/crops/raw_crops/
+data/crops/fod/
+data/crops/shadow/
+data/crops/runway_marking/
+data/crops/strobe_light/
+data/crops/clean_tarmac/
+
+# Outputs
+outputs/detections/
+outputs/alerts/
+
+# Logs (keep JSON results, ignore .log)
+logs/*.log
+
+# macOS
+.DS_Store
+**/.DS_Store
+._*
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Temp
+*.tmp
+*.bak

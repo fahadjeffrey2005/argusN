@@ -1,8 +1,9 @@
 """
-ARGUS-N Egomotion
+PRIME Egomotion
 Computes expected optical flow from IMU vehicle speed.
 This is the ground truth motion — not estimated from pixels.
-Subtract this from RAFT flow to get the residual anomaly map.
+Subtract this from Farneback flow to get the residual anomaly map.
+Copied from hawkeye — identical component shared across both models.
 """
 
 import numpy as np
@@ -15,54 +16,53 @@ class Egomotion:
         self.cfg = cfg
         self.logger = get_logger(
             "egomotion",
-            cfg.get("logging", "log_path", default="logs/argus.log"),
+            cfg.get("logging", "log_path", default="logs/prime.log"),
             cfg.get("logging", "level", default="INFO")
         )
 
-        self.imu_enabled = cfg.get("imu", "enabled", default=True)
-        self.drift_correction = cfg.get("imu", "drift_correction", default=True)
-
-        self.frame_width = cfg.get("raft", "input_size", "width", default=1920)
-        self.frame_height = cfg.get("raft", "input_size", "height", default=1080)
+        self.imu_enabled = cfg.get("imu", "enabled", default=False)
         self.fps = cfg.get("camera", "fps", default=60)
 
-        # Camera mount parameters
-        # Camera is 30-35cm from ground, facing down
-        self.camera_height_m = 0.325       # midpoint of 30-35cm
-        self.focal_length_px = 1200.0      # approximate, update per camera spec
+        # Camera mount geometry
+        self.camera_height_m = cfg.get("egomotion", "camera_height_m", default=0.325)
+        self.focal_length_px = cfg.get("egomotion", "focal_length_px", default=1200.0)
 
-        # IMU state
-        self.vehicle_speed_ms = 0.0        # metres per second
-        self.vehicle_heading_deg = 0.0     # degrees
-        self.drift_offset = np.zeros(2)    # accumulated drift correction
+        # IMU state — start at simulated speed
+        simulated_kmh = cfg.get("imu", "simulated_speed_kmh", default=30.0)
+        self.vehicle_speed_ms = simulated_kmh / 3.6
+        self.vehicle_heading_deg = 0.0
 
-        self.logger.info("Egomotion initialised")
+        self.logger.info(
+            f"Egomotion initialised — "
+            f"imu={self.imu_enabled}, "
+            f"speed={self.vehicle_speed_ms * 3.6:.1f}km/h"
+        )
 
     def update_imu(self, speed_kmh: float, heading_deg: float = 0.0):
         """
-        Update vehicle state from IMU reading.
-        Call this every IMU tick (200Hz).
+        Update vehicle state from IMU reading or manual override.
         speed_kmh: vehicle speed in km/h
         heading_deg: vehicle heading in degrees (0 = straight ahead)
         """
         self.vehicle_speed_ms = speed_kmh / 3.6
         self.vehicle_heading_deg = heading_deg
 
-    def correct_drift(self, gps_anchor_lat: float, gps_anchor_lon: float):
-        """
-        Reset IMU drift using known GPS anchor point.
-        Called at the start of every sweep at runway threshold.
-        """
-        self.drift_offset = np.zeros(2)
-        self.logger.info(
-            f"IMU drift corrected at GPS anchor "
-            f"({gps_anchor_lat:.6f}, {gps_anchor_lon:.6f})"
-        )
-
-    def compute_expected_flow(self) -> np.ndarray:
+    def compute_expected_flow(
+        self,
+        frame_height: int = None,
+        frame_width: int = None
+    ) -> np.ndarray:
         """
         Compute the expected optical flow field for the entire frame
         based on current vehicle speed and camera geometry.
+
+        Args:
+            frame_height: actual frame height in pixels (after ROI crop).
+            frame_width:  actual frame width in pixels.
+
+        IMPORTANT: always pass the actual cropped frame dimensions.
+        After ROI crop the frame is shorter than the original — passing the
+        wrong dimensions causes a shape mismatch with the Farneback flow output.
 
         Physics:
         - Vehicle moves forward at speed v (m/s)
@@ -71,23 +71,20 @@ class Egomotion:
         - In pixels: pixel_displacement = (focal_length * displacement) / height
 
         Returns:
-        expected_flow: np.ndarray shape (H, W, 2)
-            flow[:,:,0] = dx (horizontal flow per pixel)
-            flow[:,:,1] = dy (vertical flow per pixel)
+            expected_flow: np.ndarray shape (H, W, 2)
+                flow[:,:,0] = dx (horizontal)
+                flow[:,:,1] = dy (vertical — positive = forward vehicle motion)
         """
-        # Displacement in metres per frame
-        displacement_m = self.vehicle_speed_ms / self.fps
+        h = frame_height if frame_height is not None else 1080
+        w = frame_width  if frame_width  is not None else 1920
 
-        # Displacement in pixels (perspective projection)
+        displacement_m  = self.vehicle_speed_ms / self.fps
         displacement_px = (self.focal_length_px * displacement_m) / self.camera_height_m
 
-        # Expected flow field — uniform translation
-        # Vehicle moves forward → runway moves backward in frame (positive dy)
-        expected_flow = np.zeros((self.frame_height, self.frame_width, 2), dtype=np.float32)
-        expected_flow[:, :, 0] = 0.0               # no horizontal motion (straight ahead)
-        expected_flow[:, :, 1] = displacement_px   # vertical flow from forward motion
+        expected_flow = np.zeros((h, w, 2), dtype=np.float32)
+        expected_flow[:, :, 0] = 0.0               # no horizontal (straight ahead)
+        expected_flow[:, :, 1] = displacement_px   # vertical from forward motion
 
-        # Apply heading correction for slight turns
         if abs(self.vehicle_heading_deg) > 0.5:
             heading_rad = np.radians(self.vehicle_heading_deg)
             expected_flow[:, :, 0] = displacement_px * np.sin(heading_rad)
@@ -95,32 +92,9 @@ class Egomotion:
 
         return expected_flow
 
-    def get_dynamic_confirmation_window(self) -> int:
-        """
-        Confirmation window tied to vehicle speed from IMU.
-        Faster speed = more frames needed (vehicle covers more ground per frame).
-        Slower speed = fewer frames needed.
-        Base: 6 frames at 60FPS = 100ms.
-        """
-        base = self.cfg.get("bytetrack", "confirmation_frames_base", default=6)
-        max_speed = self.cfg.get("bytetrack", "max_speed_kmh", default=50)
-        min_speed = self.cfg.get("bytetrack", "min_speed_kmh", default=5)
-
-        speed_kmh = self.vehicle_speed_ms * 3.6
-
-        if speed_kmh <= min_speed:
-            return max(2, base // 2)
-        elif speed_kmh >= max_speed:
-            return base
-        else:
-            # Linear interpolation between min and max speed
-            ratio = (speed_kmh - min_speed) / (max_speed - min_speed)
-            return max(2, int(base * ratio + (base // 2) * (1 - ratio)))
-
     def __repr__(self):
         return (
             f"Egomotion("
             f"speed={self.vehicle_speed_ms * 3.6:.1f}km/h, "
-            f"heading={self.vehicle_heading_deg:.1f}deg, "
-            f"drift_correction={self.drift_correction})"
+            f"heading={self.vehicle_heading_deg:.1f}deg)"
         )

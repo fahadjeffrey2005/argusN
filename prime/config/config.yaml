@@ -3,16 +3,32 @@ device: cuda
 camera:
   input_mode: video_file
   video_file_path: data/raw/videos/recording.mp4
-  resolution:
-    width: 1920
-    height: 1080
-  fps: 60
+  fps: 30
 
 yolo:
   model_path: models/yolo/finetuned/best.pt
-  confidence_threshold: 0.35
+  confidence_threshold: 0.28   # tuned on static footage — same as HAWKEYE
   iou_threshold: 0.45
   input_size: 640
+
+tracker:
+  confirm_frames: 3            # CNN pre-filters semantics; tracker catches temporal noise
+  iou_threshold: 0.25
+  max_miss_frames: 2
+
+cnn:
+  model_path: models/cnn/prime_classifier.pth
+  input_size: 128
+  channels: 4
+  num_classes: 5
+  class_names: [fod, shadow, runway_marking, strobe_light, clean_tarmac]
+  fod_class_id: 0
+  confidence_threshold: 0.5    # CNN softmax threshold to classify as FOD
+  both_tag_bonus: 0.05
+  epochs: 30
+  batch_size: 32
+  learning_rate: 0.0005
+  early_stopping_patience: 5
 
 flow:
   residual_threshold: 2.5
@@ -27,29 +43,9 @@ egomotion:
   camera_height_m: 0.325
   focal_length_px: 1200.0
 
-cnn:
-  model_path: models/cnn/prime_classifier.pth
-  pretrained_path: models/cnn/mobilenetv3_small.pth
-  input_size: 128
-  channels: 4
-  num_classes: 5
-  class_names: [fod, shadow, runway_marking, strobe_light, clean_tarmac]
-  fod_class_id: 0
-  confidence_threshold: 0.6
-  both_tag_bonus: 0.1
-  epochs: 30
-  batch_size: 32
-  learning_rate: 0.0005
-  early_stopping_patience: 5
-
-fusion:
-  iou_match_threshold: 0.3
-  patch_padding_px: 20
-
 pipeline:
-  top_crop: 0.22
-  bot_crop: 0.15
-  warmup_frames: 30
+  top_crop: 0.50    # cut top half — distant runway, shadows, gradients
+  bot_crop: 0.05
 
 outputs:
   detections_path: outputs/detections
