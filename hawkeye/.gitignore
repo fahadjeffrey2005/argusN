@@ -27,10 +27,14 @@ models/
 !models/patchcore/
 !models/patchcore/bank.pt
 
-# Outputs — large files, exclude by default
+# Outputs — transfer via scp/Google Drive
 outputs/
-# Exception — track demo video
-!outputs/demo_hawkeye_fod1.mp4
+
+# Video files — blocked at file level too
+*.mp4
+*.avi
+*.mov
+*.mkv
 
 # Logs — exclude verbose logs, track eval results
 logs/
