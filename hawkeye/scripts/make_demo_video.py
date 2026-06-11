@@ -49,49 +49,26 @@ def apply_roi_crop(frame, top_frac: float, bot_frac: float):
     return frame[y_start:y_end, :], y_start
 
 
-def confidence_color(patchcore_score: float) -> tuple:
-    """
-    Map PatchCore score [0.6, 1.0] to BGR colour:
-      0.6  → green  (0, 255, 0)
-      0.75 → yellow (0, 255, 255)
-      1.0  → red    (0, 0, 255)
-    Uses HSV hue interpolation: green(60°) → yellow(30°) → red(0°)
-    """
-    t = max(0.0, min(1.0, (patchcore_score - 0.6) / 0.4))  # normalise to [0,1]
-    hue = int(60 * (1.0 - t))                                # 60° (green) → 0° (red)
-    hsv = np.array([[[hue, 255, 255]]], dtype=np.uint8)
-    bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[0][0]
-    return (int(bgr[0]), int(bgr[1]), int(bgr[2]))
-
-
-def draw_alerts(frame, alerts: list, y_offset: int, alert_count: int):
+def draw_alerts(frame, active_alerts: list, y_offset: int):
     """
     Draw confirmed HAWKEYE alerts onto the full (un-cropped) frame.
-    Box colour: green (low confidence) → yellow → red (high confidence).
-    Label: 'FOD 0.85' — clean and minimal.
+    Always red. Label: 'FOD 0.85'.
+    active_alerts includes both current detections and recently persisted ones.
     """
-    for alert in alerts:
+    RED = (0, 0, 255)
+    for alert in active_alerts:
         x1 = alert["x"]
         y1 = alert["y"] + y_offset
         x2 = x1 + alert["w"]
         y2 = y1 + alert["h"]
+        score = alert.get("patchcore_score", 0.0)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), RED, 2)
+        cv2.putText(frame, f"FOD {score:.2f}", (x1, y1 - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, RED, 2)
 
-        score  = alert.get("patchcore_score", 0.6)
-        colour = confidence_color(score)
-
-        cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 2)
-        cv2.putText(
-            frame, f"FOD {score:.2f}",
-            (x1, y1 - 6),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 2
-        )
-
-    if alerts:
-        cv2.putText(
-            frame, f"ALERT: {len(alerts)} FOD DETECTED",
-            (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3
-        )
-
+    if active_alerts:
+        cv2.putText(frame, f"ALERT: {len(active_alerts)} FOD DETECTED",
+                    (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, RED, 3)
     return frame
 
 
@@ -185,9 +162,11 @@ def main():
 
     # ── Main render loop ───────────────────────────────────────────────────
     frame_idx   = 0
-    alert_count = 0
-    fps_timer   = time.time()
-    fps_display = 0.0
+    alert_count    = 0
+    fps_timer      = time.time()
+    fps_display    = 0.0
+    PERSIST_FRAMES = 30          # keep box visible for 30 frames after last seen
+    persisted      = []          # [{alert, last_seen}]
 
     if args.preview:
         cv2.namedWindow("HAWKEYE — Demo", cv2.WINDOW_NORMAL)
@@ -237,12 +216,29 @@ def main():
 
             # Fusion
             alerts = fusion.fuse(cropped, yolo_dets, cands, patchcore)
-            if alerts:
+
+            # ── Persistence — keep boxes visible for PERSIST_FRAMES ──────
+            for alert in alerts:
                 alert_count += 1
+                # Check if this overlaps an existing persisted alert (simple cx/cy proximity)
+                matched = False
+                for p in persisted:
+                    if abs(p["alert"]["cx"] - alert["cx"]) < 50 and \
+                       abs(p["alert"]["cy"] - alert["cy"]) < 50:
+                        p["alert"] = alert
+                        p["last_seen"] = frame_idx
+                        matched = True
+                        break
+                if not matched:
+                    persisted.append({"alert": alert, "last_seen": frame_idx})
+
+            # Remove stale persisted alerts
+            persisted = [p for p in persisted if frame_idx - p["last_seen"] <= PERSIST_FRAMES]
+            active_alerts = [p["alert"] for p in persisted]
 
             # ── Draw onto full frame ──────────────────────────────────────
             out_frame = frame.copy()
-            out_frame = draw_alerts(out_frame, alerts, y_offset, alert_count)
+            out_frame = draw_alerts(out_frame, active_alerts, y_offset)
 
             # FPS counter (top-right, matches yolofinetune style)
             cv2.putText(

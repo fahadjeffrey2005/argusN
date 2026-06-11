@@ -33,6 +33,7 @@ patchcore:
 
 fusion:
   votes_required: 2
+  require_yolo_vote: true   # YOLO must vote — prevents flow+PatchCore false alerts on texture noise
   yolo_weight: 1
   flow_weight: 1
   patchcore_weight: 1

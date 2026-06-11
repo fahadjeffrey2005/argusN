@@ -63,8 +63,9 @@ class HawkeyeFusion:
             cfg.get("logging", "level", default="INFO")
         )
 
-        self.votes_required = cfg.get("fusion", "votes_required", default=2)
-        self.iou_merge_threshold = 0.3   # IoU above this → same object, merge
+        self.votes_required    = cfg.get("fusion", "votes_required",    default=2)
+        self.require_yolo_vote = cfg.get("fusion", "require_yolo_vote", default=True)
+        self.iou_merge_threshold = 0.3
 
         self.logger.info(
             f"HawkeyeFusion initialised — "
@@ -174,7 +175,8 @@ class HawkeyeFusion:
                 f"(score={pc_score:.3f}) → votes={total_votes}"
             )
 
-            if total_votes >= self.votes_required:
+            yolo_gate = (not self.require_yolo_vote) or (yolo_vote == 1)
+            if total_votes >= self.votes_required and yolo_gate:
                 alerts.append({
                     "x": candidate["x"],
                     "y": candidate["y"],
