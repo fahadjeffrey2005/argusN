@@ -6,6 +6,9 @@
   "precision": 0.8568,
   "recall": 0.7143,
   "f1": 0.7791,
-  "latency_ms": 249.35,
-  "fps": 4.0
+  "latency_ms": 249.73,
+  "fps": 4.0,
+  "fp_per_minute": 0.0,
+  "fp_total": 0,
+  "clean_video_duration_s": 301.4
 }
