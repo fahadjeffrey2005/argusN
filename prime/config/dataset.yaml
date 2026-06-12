@@ -1,11 +1,6 @@
-# PRIME dataset config — used by YOLO val() for evaluation
-# Absolute path is set by evaluate_prime.py at runtime via --data argument.
-# This file is a template; evaluate_prime.py writes the correct absolute path.
-
-path: data/annotated
+path: /home/koushik-test/argusN/prime/data/annotated
 train: images/train
-val:   images/val
-test:  images/test
-
+val: images/val
+test: images/test
 nc: 1
 names: ['fod']
