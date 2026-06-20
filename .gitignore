@@ -55,3 +55,7 @@ __pycache__/
 data/yolo_dataset/images/
 data/staging_new/
 data/staging_hawkeye/
+
+data/yolo_dataset/images/
+data/staging_new/
+data/staging_hawkeye/
