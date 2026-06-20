@@ -51,3 +51,7 @@ __pycache__/
 
 *.pyo
 
+
+data/yolo_dataset/images/
+data/staging_new/
+data/staging_hawkeye/

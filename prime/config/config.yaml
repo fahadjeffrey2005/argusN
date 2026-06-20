@@ -12,9 +12,10 @@ yolo:
   input_size: 640
 
 tracker:
-  confirm_frames: 3            # CNN pre-filters semantics; tracker catches temporal noise
+  confirm_frames: 3            # final confirmation gate
   iou_threshold: 0.25
   max_miss_frames: 2
+  prefilter_frames: 2          # 2-frame prefilter for slow-path candidates
 
 cnn:
   model_path: models/cnn/prime_classifier.pth
@@ -23,8 +24,11 @@ cnn:
   num_classes: 5
   class_names: [fod, shadow, runway_marking, strobe_light, clean_tarmac]
   fod_class_id: 0
-  confidence_threshold: 0.5    # CNN softmax threshold to classify as FOD
-  both_tag_bonus: 0.05
+  # Hard-reject floor: only drop a candidate when CNN is fairly confident
+  # it is NOT FOD.  Deliberately low — let the tracker handle ambiguity.
+  confidence_threshold: 0.25
+  # Fast-path: skip 2-frame prefilter, enter 3-frame tracker directly
+  fast_path_threshold: 0.90
   epochs: 30
   batch_size: 32
   learning_rate: 0.0005
@@ -46,6 +50,12 @@ egomotion:
 pipeline:
   top_crop: 0.50    # cut top half — distant runway, shadows, gradients
   bot_crop: 0.05
+
+data:
+  # clean1.mp4 hard split — NEVER CROSS THIS BOUNDARY
+  # Frames 0..6299   (0–209s @ 30fps)  → crop collection / CNN training
+  # Frames 6300+     (210s–end)        → FP rate evaluation only
+  clean_split_frame: 6300
 
 outputs:
   detections_path: outputs/detections

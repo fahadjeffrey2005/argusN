@@ -85,7 +85,7 @@ class TemporalTracker:
             confirmed  = tracker.update(fod_dets)
     """
 
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, confirm_frames_override: int = 0):
         self.cfg    = cfg
         self.logger = get_logger(
             "temporal_tracker",
@@ -93,7 +93,8 @@ class TemporalTracker:
             cfg.get("logging", "level",      default="INFO"),
         )
 
-        self.confirm_frames = cfg.get("tracker", "confirm_frames",  default=3)
+        default_confirm     = cfg.get("tracker", "confirm_frames",  default=3)
+        self.confirm_frames = confirm_frames_override if confirm_frames_override > 0 else default_confirm
         self.iou_threshold  = cfg.get("tracker", "iou_threshold",   default=0.25)
         self.max_miss       = cfg.get("tracker", "max_miss_frames",  default=2)
 
