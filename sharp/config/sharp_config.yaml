@@ -6,7 +6,7 @@ model:
   weights: "yolofinetune/models/yolo/finetuned/best.pt"
   imgsz: 640          # try 1280 for better small-object recall (slower)
   conf: 0.25          # lower than HAWKEYE (0.35) to catch weak small-FOD detections
-  device: "cpu"       # "cpu" | "cuda" | "mps"
+  device: "cuda"      # "cpu" | "cuda" | "mps"
 
 roi:
   top_crop: 0.50
