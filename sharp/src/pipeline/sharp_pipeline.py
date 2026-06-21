@@ -12,6 +12,7 @@ SHARP = HAWKEYE v2
   ✓ Full stats returned per video
 """
 
+import time
 from pathlib import Path
 from typing import Optional
 import cv2
@@ -138,6 +139,7 @@ class SharpPipeline:
         total_passed     = 0
         frames_with_dets = 0
         saved            = 0
+        t_start          = time.perf_counter()
 
         print(f"  Processing {total_frames} frames @ {src_fps:.0f}fps  ({total_frames/src_fps:.0f}s video)...", flush=True)
         print(f"  imgsz={self.cfg['model']['imgsz']}  conf={self.cfg['model']['conf']}  "
@@ -229,7 +231,11 @@ class SharpPipeline:
         if writer:
             writer.release()
 
+        t_elapsed  = time.perf_counter() - t_start
         duration_s = total_frames / src_fps
+        fps        = frame_idx / t_elapsed if t_elapsed > 0 else 0
+        latency_ms = (t_elapsed / max(frame_idx, 1)) * 1000
+
         return {
             "video":             Path(video_path).name,
             "frames":            frame_idx,
@@ -243,4 +249,7 @@ class SharpPipeline:
             "filter_reduction":  f"{100*(1 - total_passed/max(total_confirmed,1)):.0f}%",
             "total_reduction":   f"{100*(1 - total_passed/max(total_raw,1)):.0f}%",
             "frames_saved":      saved,
+            "fps":               round(fps, 1),
+            "latency_ms":        round(latency_ms, 2),
+            "processing_time_s": round(t_elapsed, 1),
         }
