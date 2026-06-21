@@ -139,10 +139,19 @@ class SharpPipeline:
         frames_with_dets = 0
         saved            = 0
 
+        print(f"  Processing {total_frames} frames @ {src_fps:.0f}fps  ({total_frames/src_fps:.0f}s video)...", flush=True)
+        print(f"  imgsz={self.cfg['model']['imgsz']}  conf={self.cfg['model']['conf']}  "
+              f"confirm={self.cfg['tracker']['confirm_frames']}f  small_confirm={self.cfg['tracker'].get('small_confirm_frames',2)}f", flush=True)
+
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
+
+            if frame_idx % 100 == 0:
+                pct = 100 * frame_idx / max(total_frames, 1)
+                print(f"  {pct:5.1f}%  frame {frame_idx}/{total_frames}  "
+                      f"raw={total_raw}  confirmed={total_confirmed}  passed={total_passed}", flush=True)
 
             raw_dets  = self.detector.detect(frame)
             total_raw += len(raw_dets)
