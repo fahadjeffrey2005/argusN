@@ -84,6 +84,7 @@ class SharpPipeline:
         out_labels: Optional[str] = None,
         extract_fps: Optional[float] = None,
         show_rejected: bool = False,
+        max_frames: Optional[int] = None,
     ) -> dict:
         """
         Run SHARP on a single video.
@@ -146,6 +147,8 @@ class SharpPipeline:
               f"confirm={self.cfg['tracker']['confirm_frames']}f  small_confirm={self.cfg['tracker'].get('small_confirm_frames',2)}f", flush=True)
 
         while True:
+            if max_frames and frame_idx >= max_frames:
+                break
             ret, frame = cap.read()
             if not ret:
                 break

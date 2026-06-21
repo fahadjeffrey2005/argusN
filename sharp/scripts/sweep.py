@@ -32,15 +32,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from sharp.src.pipeline.sharp_pipeline import SharpPipeline, load_config
 
 
-def run_config(base_cfg: dict, video_path: str) -> dict:
-    """Run pipeline with a config dict and return stats."""
+def run_config(base_cfg: dict, video_path: str, max_frames: int) -> dict:
+    """Run pipeline with a config dict on up to max_frames frames."""
     import tempfile, os
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         yaml.dump(base_cfg, f)
         tmp = f.name
     try:
         pipe  = SharpPipeline(tmp)
-        stats = pipe.run_video(video_path)
+        stats = pipe.run_video(video_path, max_frames=max_frames)
     finally:
         os.unlink(tmp)
     return stats
@@ -54,6 +54,8 @@ def main():
     parser.add_argument("--confirm",     type=int,   nargs="+", default=[2, 3, 4])
     parser.add_argument("--conf",        type=float, nargs="+", default=[0.20, 0.25, 0.30, 0.35])
     parser.add_argument("--max_miss",    type=int,   nargs="+", default=[2, 3])
+    parser.add_argument("--max_frames",  type=int,   default=300,
+                        help="Max frames to process per video per combo (default 300 for speed)")
     args = parser.parse_args()
 
     base_cfg = load_config(args.config)
@@ -65,9 +67,12 @@ def main():
         for mm in args.max_miss
     ]
 
+    est_mins = len(combos) * 2 * args.max_frames * 0.175 / 60
     print(f"\nSHARP parameter sweep — {len(combos)} combinations")
     print(f"  FOD video   : {args.fod_video}")
     print(f"  Clean video : {args.clean_video}")
+    print(f"  Max frames/video/combo : {args.max_frames}")
+    print(f"  Estimated time         : ~{est_mins:.0f} min")
     print(f"  confirm_frames : {args.confirm}")
     print(f"  conf           : {args.conf}")
     print(f"  max_miss       : {args.max_miss}")
@@ -85,8 +90,9 @@ def main():
         cfg["model"]["conf"]             = co
         cfg["tracker"]["max_miss"]       = mm
 
-        fod_s   = run_config(cfg, args.fod_video)
-        clean_s = run_config(cfg, args.clean_video)
+        print(f"  [{i+1}/{len(combos)}] confirm={cf} conf={co} miss={mm}...", end=" ", flush=True)
+        fod_s   = run_config(cfg, args.fod_video,   args.max_frames)
+        clean_s = run_config(cfg, args.clean_video, args.max_frames)
 
         fod_dpm   = fod_s["dets_per_min"]
         clean_dpm = clean_s["dets_per_min"]
@@ -98,7 +104,8 @@ def main():
                "signal": signal, "fp_reduction": fp_reduc}
         results.append(row)
 
-        marker = " ◀ BEST" if i == 0 else ""
+        print(f"done  signal={signal:.1f}", flush=True)
+        marker = ""
         print(f"  {cf:>5}    {co:>5.2f}    {mm:>2}  | {fod_dpm:>11.1f}  {clean_dpm:>13.1f}  {signal:>8.1f}  {fp_reduc:>8}{marker}")
 
     print()
