@@ -33,26 +33,30 @@ class _Track:
 
     def __init__(self, det: Detection, confirm_frames: int, peak_conf_min: float = 0.0):
         _Track._next_id += 1
-        self.tid            = _Track._next_id
-        self.det            = det
-        self.hits           = 1
-        self.miss           = 0
-        self.confirmed      = False
-        self.confirm_frames = confirm_frames
-        self.peak_conf_min  = peak_conf_min
-        self.peak_conf      = det.conf       # track highest confidence seen
+        self.tid              = _Track._next_id
+        self.det              = det
+        self.hits             = 1
+        self.miss             = 0
+        self.confirmed        = False
+        self.just_confirmed   = False   # True only on the frame it FIRST confirms
+        self.confirm_frames   = confirm_frames
+        self.peak_conf_min    = peak_conf_min
+        self.peak_conf        = det.conf
 
     def update(self, det: Detection):
-        self.det       = det
-        self.hits     += 1
-        self.miss      = 0
-        self.peak_conf = max(self.peak_conf, det.conf)
-        # Confirm only if temporal threshold AND peak confidence gate both pass
-        if self.hits >= self.confirm_frames and self.peak_conf >= self.peak_conf_min:
-            self.confirmed = True
+        self.det            = det
+        self.hits          += 1
+        self.miss           = 0
+        self.peak_conf      = max(self.peak_conf, det.conf)
+        self.just_confirmed = False
+        if not self.confirmed:
+            if self.hits >= self.confirm_frames and self.peak_conf >= self.peak_conf_min:
+                self.confirmed      = True
+                self.just_confirmed = True   # fires exactly once per unique FOD object
 
     def mark_missed(self):
-        self.miss += 1
+        self.miss           = self.miss + 1
+        self.just_confirmed = False
 
     def warp(self, M: np.ndarray):
         """Apply affine matrix M to this track's bounding box center, update box."""
@@ -270,4 +274,8 @@ class EnhancedTracker:
                 self._tracks.append(_Track(d, self._confirm_for(d), self.peak_conf_min))
 
         self._tracks = [t for t in self._tracks if t.miss <= self.max_miss]
-        return [t.det for t in self._tracks if t.confirmed]
+
+        confirmed_dets    = [t.det for t in self._tracks if t.confirmed]
+        newly_confirmed   = [t for t in self._tracks if t.just_confirmed]
+
+        return confirmed_dets, newly_confirmed

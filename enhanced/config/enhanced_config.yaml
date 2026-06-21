@@ -3,7 +3,7 @@
 
 model:
   weights: "yolofinetune/models/yolo/finetuned/best.pt"
-  imgsz: 1280         # upgraded from SHARP's 640 — better small object resolution
+  imgsz: 640          # back to 640 for real-time FPS — CMC + peak_conf handle quality
   conf: 0.25
   device: "cuda"
 
