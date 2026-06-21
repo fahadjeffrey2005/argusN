@@ -1,0 +1,38 @@
+# SHARP Configuration — HAWKEYE v2
+# All tunable parameters in one place.
+# Edit this file to change behaviour without touching any code.
+
+model:
+  weights: "yolofinetune/models/yolo/finetuned/best.pt"
+  imgsz: 640          # try 1280 for better small-object recall (slower)
+  conf: 0.25          # lower than HAWKEYE (0.35) to catch weak small-FOD detections
+  device: "cpu"       # "cpu" | "cuda" | "mps"
+
+roi:
+  top_crop: 0.50
+  bot_crop: 0.05
+  left_crop: 0.00
+  right_crop: 0.00
+
+tracker:
+  confirm_frames: 3         # frames to confirm LARGE detections
+  small_confirm_frames: 2   # frames to confirm SMALL detections (< small_area_px) ← NEW
+  small_area_px: 1000       # px² threshold — below this = "small object"         ← NEW
+  iou_threshold: 0.20       # lowered from HAWKEYE 0.25 — more lenient for small boxes ← NEW
+  max_miss: 2               # frames a track can disappear before being dropped
+  max_dist_frac: 0.05       # center-distance fallback: max 5% of frame diagonal   ← NEW
+
+post_filter:
+  min_box_area: 64          # lowered from 100 → allows 8×8px bolt detections      ← NEW
+  max_box_fraction: 0.25
+  min_aspect: 0.15
+  max_aspect: 6.0
+
+output:
+  extract_fps: 2.0
+  draw_roi_lines: true
+  box_color_bgr: [0, 140, 255]   # orange (distinct from HAWKEYE green / YOLO red)
+  label_confirmed: true
+
+logging:
+  verbose: false
