@@ -63,7 +63,8 @@ class EnhancedPipeline:
             iou_threshold        = trk["iou_threshold"],
             max_miss             = trk["max_miss"],
             max_dist_frac        = trk.get("max_dist_frac", 0.05),
-            peak_conf_min        = trk.get("peak_conf_min", 0.35),
+            peak_conf_min        = trk.get("peak_conf_min", 0.42),
+            conf_growth_min      = trk.get("conf_growth_min", 0.08),
             camera_compensation  = trk.get("camera_compensation", True),
             comp_max_corners     = trk.get("comp_max_corners", 200),
             comp_quality         = trk.get("comp_quality", 0.01),
@@ -131,7 +132,8 @@ class EnhancedPipeline:
         print(f"  imgsz={self.cfg['model']['imgsz']}  conf={self.cfg['model']['conf']}  "
               f"CMC={'ON' if trk_cfg.get('camera_compensation') else 'OFF'}  "
               f"confirm={trk_cfg['confirm_frames']}f  "
-              f"peak_conf≥{trk_cfg.get('peak_conf_min', 0.35)}", flush=True)
+              f"peak_conf≥{trk_cfg.get('peak_conf_min', 0.42)}  "
+              f"growth≥{trk_cfg.get('conf_growth_min', 0.08)}", flush=True)
 
         while True:
             if max_frames and frame_idx >= max_frames:

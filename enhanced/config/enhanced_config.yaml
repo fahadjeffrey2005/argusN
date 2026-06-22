@@ -25,7 +25,10 @@ tracker:
   # Runway noise fires weakly at 0.25-0.28 across all frames.
   # Real FOD grows in confidence as the camera closes in — it will cross this threshold.
   # CMC keeps small FOD tracks alive long enough for confidence to build.
-  peak_conf_min: 0.35
+  peak_conf_min: 0.42       # raised from 0.35 — cuts flat-confidence surface noise
+  conf_growth_min: 0.08     # NEW: peak_conf must exceed initial_conf by this margin
+                            # Real FOD confidence grows as camera approaches.
+                            # Runway cracks/textures fire at flat confidence — rejected.
   # Camera motion compensation
   camera_compensation: true
   comp_max_corners: 200

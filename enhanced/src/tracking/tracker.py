@@ -31,7 +31,8 @@ from ..detection.detector import Detection
 class _Track:
     _next_id: int = 0
 
-    def __init__(self, det: Detection, confirm_frames: int, peak_conf_min: float = 0.0):
+    def __init__(self, det: Detection, confirm_frames: int,
+                 peak_conf_min: float = 0.0, conf_growth_min: float = 0.0):
         _Track._next_id += 1
         self.tid              = _Track._next_id
         self.det              = det
@@ -41,6 +42,8 @@ class _Track:
         self.just_confirmed   = False   # True only on the frame it FIRST confirms
         self.confirm_frames   = confirm_frames
         self.peak_conf_min    = peak_conf_min
+        self.conf_growth_min  = conf_growth_min   # NEW: peak must exceed initial by this
+        self.initial_conf     = det.conf           # recorded at birth, never updated
         self.peak_conf        = det.conf
 
     def update(self, det: Detection):
@@ -50,7 +53,10 @@ class _Track:
         self.peak_conf      = max(self.peak_conf, det.conf)
         self.just_confirmed = False
         if not self.confirmed:
-            if self.hits >= self.confirm_frames and self.peak_conf >= self.peak_conf_min:
+            growth_ok = (self.peak_conf - self.initial_conf) >= self.conf_growth_min
+            if (self.hits >= self.confirm_frames
+                    and self.peak_conf >= self.peak_conf_min
+                    and growth_ok):
                 self.confirmed      = True
                 self.just_confirmed = True   # fires exactly once per unique FOD object
 
@@ -175,7 +181,8 @@ class EnhancedTracker:
                  iou_threshold: float      = 0.25,
                  max_miss: int             = 2,
                  max_dist_frac: float      = 0.05,
-                 peak_conf_min: float      = 0.35,
+                 peak_conf_min: float      = 0.42,
+                 conf_growth_min: float    = 0.08,
                  camera_compensation: bool = True,
                  comp_max_corners: int     = 200,
                  comp_quality: float       = 0.01,
@@ -188,6 +195,7 @@ class EnhancedTracker:
         self.max_miss             = max_miss
         self.max_dist_frac        = max_dist_frac
         self.peak_conf_min        = peak_conf_min
+        self.conf_growth_min      = conf_growth_min
         self._tracks: List[_Track] = []
         self._frame_w: int = 1920
         self._frame_h: int = 1080
@@ -271,7 +279,8 @@ class EnhancedTracker:
 
         for di, d in enumerate(detections):
             if di not in matched_d:
-                self._tracks.append(_Track(d, self._confirm_for(d), self.peak_conf_min))
+                self._tracks.append(_Track(d, self._confirm_for(d),
+                                        self.peak_conf_min, self.conf_growth_min))
 
         self._tracks = [t for t in self._tracks if t.miss <= self.max_miss]
 
