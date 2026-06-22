@@ -14,8 +14,8 @@ roi:
   right_crop: 0.00
 
 tracker:
-  confirm_frames: 3
-  small_confirm_frames: 3   # back to 3 — CMC handles camera motion, no shortcut needed
+  confirm_frames: 4
+  small_confirm_frames: 4   # raised with confirm_frames
   small_area_px: 1000
   iou_threshold: 0.25       # back to 0.25 — CMC compensates for movement drift
   max_miss: 2
