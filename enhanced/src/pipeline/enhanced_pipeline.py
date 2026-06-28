@@ -3,36 +3,94 @@ enhanced/src/pipeline/enhanced_pipeline.py
 --------------------------------------------
 ENHANCED pipeline — properly counts UNIQUE FOD OBJECTS, not frame events.
 
-The fundamental fix:
-  Previous approach counted every detection on every frame.
-  Same FOD visible for 3 seconds @ 25fps = 75 "detections" for ONE object.
-  That's why numbers were in the hundreds/thousands — nonsense for an operator.
-
-  ENHANCED counts each physical FOD object ONCE when its track first confirms.
-  Expected output for a runway pass: 20-30 unique objects, not 1420 events.
-
 Upgrades over SHARP:
   ✓ Unique object counting (just_confirmed flag — fires exactly once per FOD)
   ✓ Camera motion compensation (optical flow warps tracks before matching)
-  ✓ Peak confidence gate (only confirm if track hits conf ≥ 0.35 at least once)
-  ✓ imgsz=640 (real-time FPS maintained)
-  ✓ device=cuda
+  ✓ Peak confidence gate (only confirm if track hits conf ≥ 0.42 at least once)
+  ✓ Confidence growth gate (peak_conf must exceed initial_conf by ≥ 0.12)
+  ✓ Patch contrast gate — camera-agnostic TinyNet equivalent:
+      Measures Michelson contrast of confirmed bbox vs surrounding border pixels.
+      Real FOD (bolt/nail/wire) has measurable contrast against the runway surface.
+      Runway texture false flags blend into surroundings — contrast ≈ 0.
+      Physics-based, no training needed, works across any camera setup.
+  ✓ imgsz=640, device=cuda
 """
 
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 import cv2
+import numpy as np
 import yaml
 
 from ..detection.detector import EnhancedDetector
 from ..tracking.tracker import EnhancedTracker
 from ..filtering.post_filter import PostFilter
+from ..detection.detector import Detection
 
 
 def load_config(config_path: str) -> dict:
     with open(config_path) as f:
         return yaml.safe_load(f)
+
+
+def _michelson_contrast(frame: np.ndarray, det: Detection, margin: int = 12) -> float:
+    """
+    Michelson contrast of a detection bbox vs its surrounding border.
+
+    Computes:
+        contrast = |mean_inner - mean_border| / (mean_inner + mean_border)
+
+    Real FOD (bolt, nail, wire) sits on the runway with measurable brightness
+    or darkness difference vs the surrounding asphalt/concrete.
+    Runway texture false flags blend into surroundings — contrast ≈ 0.
+
+    This is the camera-agnostic equivalent of Siddhart's TinyNet patch classifier.
+    No training required. Works on any camera, any mounting angle.
+
+    Returns float in [0, 1]. Higher = more visually distinct object.
+    """
+    h, w = frame.shape[:2]
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+    # Inner patch — the detection itself
+    x1 = max(0, det.x1)
+    y1 = max(0, det.y1)
+    x2 = min(w - 1, det.x2)
+    y2 = min(h - 1, det.y2)
+
+    if x2 <= x1 or y2 <= y1:
+        return 0.0
+
+    inner = gray[y1:y2, x1:x2]
+    if inner.size == 0:
+        return 0.0
+    mean_inner = float(inner.mean())
+
+    # Outer border — margin px around the bbox, excluding the inner region
+    ox1 = max(0, x1 - margin)
+    oy1 = max(0, y1 - margin)
+    ox2 = min(w - 1, x2 + margin)
+    oy2 = min(h - 1, y2 + margin)
+
+    outer = gray[oy1:oy2, ox1:ox2].copy()
+    # Zero out the inner region so we only sample the border ring
+    rel_y1 = y1 - oy1
+    rel_y2 = y2 - oy1
+    rel_x1 = x1 - ox1
+    rel_x2 = x2 - ox1
+    outer[rel_y1:rel_y2, rel_x1:rel_x2] = np.nan
+
+    border_pixels = outer[~np.isnan(outer)]
+    if len(border_pixels) == 0:
+        return 0.0
+    mean_border = float(border_pixels.mean())
+
+    denom = mean_inner + mean_border
+    if denom < 1e-6:
+        return 0.0
+
+    return abs(mean_inner - mean_border) / denom
 
 
 class EnhancedPipeline:
@@ -77,6 +135,10 @@ class EnhancedPipeline:
             min_aspect       = pf["min_aspect"],
             max_aspect       = pf["max_aspect"],
         )
+
+        # Patch contrast gate params (camera-agnostic TinyNet equivalent)
+        self.patch_contrast_min = pf.get("patch_contrast_min", 0.0)
+        self.contrast_margin_px = pf.get("contrast_margin_px", 12)
 
         self.class_names: dict = self.detector.class_names
 
@@ -133,7 +195,8 @@ class EnhancedPipeline:
               f"CMC={'ON' if trk_cfg.get('camera_compensation') else 'OFF'}  "
               f"confirm={trk_cfg['confirm_frames']}f  "
               f"peak_conf≥{trk_cfg.get('peak_conf_min', 0.42)}  "
-              f"growth≥{trk_cfg.get('conf_growth_min', 0.08)}", flush=True)
+              f"growth≥{trk_cfg.get('conf_growth_min', 0.12)}  "
+              f"contrast≥{self.patch_contrast_min}", flush=True)
 
         while True:
             if max_frames and frame_idx >= max_frames:
@@ -159,13 +222,21 @@ class EnhancedPipeline:
             final_draw = self.post_filter.apply(confirmed_dets, roi_area)
 
             # Count each unique physical FOD object exactly ONCE
-            new_objects = [t for t in newly_confirmed
-                           if any(abs(t.det.x1 - d.x1) < 5 for d in
-                                  self.post_filter.apply([t.det], roi_area))]
-            # Simpler: count newly confirmed that pass the filter
+            # Gate 1: post-filter (size, aspect ratio)
             new_passed = self.post_filter.apply(
                 [t.det for t in newly_confirmed], roi_area
             )
+            # Gate 2: patch contrast (camera-agnostic TinyNet equivalent)
+            # Real FOD has measurable Michelson contrast vs surrounding runway pixels.
+            # Runway texture false flags blend in — contrast ≈ 0. Reject them here.
+            if self.patch_contrast_min > 0 and frame is not None:
+                contrast_passed = []
+                for d in new_passed:
+                    c = _michelson_contrast(frame, d, self.contrast_margin_px)
+                    if c >= self.patch_contrast_min:
+                        contrast_passed.append(d)
+                new_passed = contrast_passed
+
             unique_fod_count += len(new_passed)
 
             save_this = (frame_idx % interval == 0)
