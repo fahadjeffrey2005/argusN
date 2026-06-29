@@ -28,7 +28,7 @@ print("="*60)
 
 # ── 1. Raw checkpoint metadata ───────────────────────────────
 import torch
-ckpt = torch.load(str(WEIGHTS), map_location="cpu")
+ckpt = torch.load(str(WEIGHTS), map_location="cpu", weights_only=False)
 
 print("\n[1] Checkpoint keys:")
 for k in ckpt.keys():
