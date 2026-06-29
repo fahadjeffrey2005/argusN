@@ -231,7 +231,7 @@ def main():
         results = model.train(bbox_loss="nwd", **train_kwargs)
         nwd_available = True
         print("\n    NWD loss active (better gradient signal for tiny objects)")
-    except TypeError:
+    except (TypeError, SyntaxError):
         print("\n    NWD loss not available in this Ultralytics version — using CIoU")
         results = model.train(**train_kwargs)
 
