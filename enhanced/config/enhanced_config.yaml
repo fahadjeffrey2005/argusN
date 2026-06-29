@@ -41,6 +41,10 @@ post_filter:
   max_box_fraction: 0.25
   min_aspect: 0.15
   max_aspect: 6.0
+  # FOD alert class whitelist — ONLY these class indices trigger unique FOD alerts.
+  # Classes: 0=bolt, 1=foreign object, 2=oil marks, 3=runway damage, 4=runway line, 5=tire marks
+  # runway line (4) and runway damage (3) are detected but NEVER count as FOD.
+  fod_alert_classes: [0, 1, 2, 5]   # bolt, foreign object, oil marks, tire marks
   # Patch contrast gate — inspired by Siddhart's TinyNet but camera-agnostic
   # Michelson contrast: |mean_inner - mean_border| / (mean_inner + mean_border)
   # Real FOD (bolt, nail, wire) has measurable contrast vs surrounding runway pixels.

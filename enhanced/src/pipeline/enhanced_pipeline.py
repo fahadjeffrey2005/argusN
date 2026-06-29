@@ -140,6 +140,12 @@ class EnhancedPipeline:
         self.patch_contrast_min = pf.get("patch_contrast_min", 0.0)
         self.contrast_margin_px = pf.get("contrast_margin_px", 12)
 
+        # FOD alert class whitelist — only these classes count as unique FOD detections.
+        # runway_line and runway_damage are detected but never trigger FOD alerts.
+        # None = all classes alert (backward compat).
+        alert = pf.get("fod_alert_classes", None)
+        self.fod_alert_classes = set(alert) if alert is not None else None
+
         self.class_names: dict = self.detector.class_names
 
     def run_video(self,
@@ -248,6 +254,11 @@ class EnhancedPipeline:
                     if c >= self.patch_contrast_min:
                         contrast_passed.append(d)
                 new_passed = contrast_passed
+
+            # Gate 3: class whitelist — runway_line, runway_damage never count as FOD.
+            # Only bolt, foreign object, oil marks, tire marks trigger unique FOD alerts.
+            if self.fod_alert_classes is not None:
+                new_passed = [d for d in new_passed if d.cls in self.fod_alert_classes]
 
             unique_fod_count += len(new_passed)
 
