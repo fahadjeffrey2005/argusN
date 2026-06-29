@@ -149,14 +149,26 @@ class EnhancedPipeline:
                   out_labels: Optional[str] = None,
                   extract_fps: Optional[float] = None,
                   show_rejected: bool = False,
+                  show: bool = False,
                   max_frames: Optional[int] = None) -> dict:
+        """
+        video_path can be a local file path OR an RTSP URL
+        (e.g. rtsp://192.168.1.101:8554/hawkeye for live RPi5 feed).
+
+        show=True opens a live display window — requires a display (not for headless runs).
+        """
 
         out_cfg = self.cfg["output"]
         efps    = extract_fps or out_cfg.get("extract_fps", 2.0)
         box_bgr = tuple(out_cfg.get("box_color_bgr", [0, 255, 180]))
         new_bgr = (0, 80, 255)   # red flash on the frame a new unique FOD is confirmed
 
-        cap = cv2.VideoCapture(str(video_path))
+        # RTSP streams need cv2.CAP_FFMPEG backend for reliable decoding
+        is_rtsp = str(video_path).startswith("rtsp://") or str(video_path).startswith("rtsps://")
+        if is_rtsp:
+            cap = cv2.VideoCapture(str(video_path), cv2.CAP_FFMPEG)
+        else:
+            cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open: {video_path}")
 
@@ -275,6 +287,14 @@ class EnhancedPipeline:
                 if writer:
                     writer.write(vis)
 
+                # Live display window (for --show flag)
+                if show:
+                    cv2.imshow("ENHANCED — Live Feed (press Q to quit)", vis)
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q') or key == 27:
+                        print("\n  [User quit]", flush=True)
+                        break
+
                 if save_this:
                     fname = f"{stem}_{frame_idx:06d}"
                     if out_images:
@@ -295,6 +315,8 @@ class EnhancedPipeline:
         cap.release()
         if writer:
             writer.release()
+        if show:
+            cv2.destroyAllWindows()
 
         t_elapsed  = time.perf_counter() - t_start
         duration_s = total_frames / src_fps
