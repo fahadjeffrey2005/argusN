@@ -5,7 +5,7 @@
 model:
   weights: "yolofinetune/models/yolo/finetuned/best.pt"
   imgsz: 640          # back to 640 for real-time FPS — CMC + peak_conf handle quality
-  conf: 0.25
+  conf: 0.10          # lowered: v11s detects real FODs at 0.10-0.35, not 0.25+
   device: "cuda"
 
 roi:
@@ -26,8 +26,8 @@ tracker:
   # Runway noise fires weakly at 0.25-0.28 across all frames.
   # Real FOD grows in confidence as the camera closes in — it will cross this threshold.
   # CMC keeps small FOD tracks alive long enough for confidence to build.
-  peak_conf_min: 0.42       # raised from 0.35 — cuts flat-confidence surface noise
-  conf_growth_min: 0.12     # raised 0.08→0.12: persistent surface features fire flat, real FOD grows
+  peak_conf_min: 0.30       # lowered from 0.42 — v11s FODs peak at 0.25-0.44 on this camera
+  conf_growth_min: 0.08     # lowered from 0.12 — growth still required, just less aggressive
                             # Real FOD confidence grows as camera approaches.
                             # Runway cracks/textures fire at flat confidence — rejected.
   # Camera motion compensation
@@ -44,7 +44,7 @@ post_filter:
   # FOD alert class whitelist — ONLY these class indices trigger unique FOD alerts.
   # Classes: 0=bolt, 1=foreign object, 2=oil marks, 3=runway damage, 4=runway line, 5=tire marks
   # runway line (4) and runway damage (3) are detected but NEVER count as FOD.
-  fod_alert_classes: [0, 1, 2, 5]   # bolt, foreign object, oil marks, tire marks
+  fod_alert_classes: [0, 1]          # bolt, foreign object ONLY — runway line/damage/tiremark never alert
   # Patch contrast gate — inspired by Siddhart's TinyNet but camera-agnostic
   # Michelson contrast: |mean_inner - mean_border| / (mean_inner + mean_border)
   # Real FOD (bolt, nail, wire) has measurable contrast vs surrounding runway pixels.
