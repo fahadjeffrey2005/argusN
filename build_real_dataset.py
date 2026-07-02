@@ -40,8 +40,10 @@ import numpy as np
 
 # Roboflow class mapping:
 # 0=bolt, 1=foreign object, 2=oil marks, 3=runway damage, 4=runway line, 5=tire marks
-FOD_CLASSES    = {0, 1, 2, 5}   # remap these to class 0 "fod"
-SKIP_CLASSES   = {3, 4}         # runway_damage, runway_line — skip these annotations
+# ONLY bolt and foreign object are real FOD (loose objects that damage engines)
+# Everything else is runway surface features — model must NOT fire on these
+FOD_CLASSES    = {0, 1}         # bolt, foreign object ONLY → class 0 "fod"
+SKIP_CLASSES   = {2, 3, 4, 5}  # oil marks, runway damage, runway line, tire marks — all background
 
 
 def parse_args():
