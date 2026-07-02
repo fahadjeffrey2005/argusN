@@ -104,14 +104,17 @@ class EnhancedPipeline:
         self.cfg = cfg
 
         self.detector = EnhancedDetector(
-            model_path  = m["weights"],
-            conf        = m["conf"],
-            imgsz       = m["imgsz"],
-            device      = m["device"],
-            top_crop    = roi["top_crop"],
-            bot_crop    = roi["bot_crop"],
-            left_crop   = roi.get("left_crop", 0.0),
-            right_crop  = roi.get("right_crop", 0.0),
+            model_path    = m["weights"],
+            conf          = m["conf"],
+            imgsz         = m["imgsz"],
+            device        = m["device"],
+            top_crop      = roi["top_crop"],
+            bot_crop      = roi["bot_crop"],
+            left_crop     = roi.get("left_crop", 0.0),
+            right_crop    = roi.get("right_crop", 0.0),
+            use_sliced    = m.get("use_sliced", True),
+            slice_size    = m.get("slice_size", 640),
+            slice_overlap = m.get("slice_overlap", 0.2),
         )
 
         self.tracker = EnhancedTracker(

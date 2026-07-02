@@ -4,9 +4,15 @@
 
 model:
   weights: "yolofinetune/models/yolo/finetuned/best.pt"
-  imgsz: 640          # back to 640 for real-time FPS — CMC + peak_conf handle quality
-  conf: 0.10          # lowered: v11s detects real FODs at 0.10-0.35, not 0.25+
+  imgsz: 640
+  conf: 0.10
   device: "cuda"
+  # Sliced inference (SAHI-style) — critical for tiny FODs (5mm-10cm)
+  # Divides the ROI into overlapping 640x640 patches at native resolution.
+  # A 5mm FOD that would be 3px in a squashed 640x640 frame stays 10-15px in its slice.
+  use_sliced: true
+  slice_size: 640       # patch size — match model training imgsz
+  slice_overlap: 0.2    # 20% overlap prevents FODs being cut at patch edges
 
 roi:
   top_crop: 0.50
